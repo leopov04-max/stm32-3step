@@ -56,7 +56,8 @@ HardwareSerial SerialZ(PC7, PC6);    // RX, TX  [USART6]
 #define R_SENSE          0.11f
 #define RUN_CURRENT_MA   800    // Dong dien chay (mA)
 #define HOLD_CURRENT_MA  400    // Dong dien giu (mA)
-#define MICROSTEPS       16     // Vi buoc: 1,2,4,8,16,32,64,128,256
+// Vi buoc rieng tung truc (X microstep cao hon -> chinh xac hon)
+const int MICROSTEPS_AXIS[NUM_AXES] = {32, 16, 16};  // X, Y, Z
 
 // Driver objects
 TMC2208Stepper driverX(&SerialX, R_SENSE);
@@ -91,15 +92,11 @@ int  backoffSteps[NUM_AXES]   = {160, 160, 160};
 // Thoi gian debounce cong tac (microseconds)
 #define SW_DEBOUNCE_US  5000  // 5ms xac nhan cong tac
 
-// Thong so toc do chuan (cho 1/16 microstep)
-#define BASE_HOMING_DELAY_US  800
-#define BASE_MOVE_DELAY_US    400
-#define BASE_MICROSTEP        16
-
-// Delay thuc te tinh theo microstep tung truc (tinh trong setup)
-// VD: 1/256 -> delay = 800*16/256 = 50us (cung toc do vat ly)
-int homingDelayUs[NUM_AXES] = {BASE_HOMING_DELAY_US, BASE_HOMING_DELAY_US, BASE_HOMING_DELAY_US};
-int moveDelayUs[NUM_AXES]   = {BASE_MOVE_DELAY_US, BASE_MOVE_DELAY_US, BASE_MOVE_DELAY_US};
+// Delay TRUC TIEP (microseconds) cho tung truc - KHONG dung cong thuc
+// Chinh truc tiep gia tri nay de thay doi toc do
+// Lon hon = cham hon, Nho hon = nhanh hon
+int homingDelayUs[NUM_AXES] = {600, 600, 600};  // X, Y, Z (us)
+int moveDelayUs[NUM_AXES]   = {600, 600, 650};  // X, Y, Z (us)
 
 // ==========================================
 // HAM DEBOUNCE CONG TAC (50ms + 3 lan kiem tra)
@@ -138,14 +135,14 @@ uint8_t scaleCurrentToIhold(int holdMa, int runMa) {
 // ==========================================
 // KHOI TAO MOT DRIVER TMC2208 QUA UART
 // ==========================================
-void initDriver(TMC2208Stepper* drv, HardwareSerial* ser, char axis) {
+void initDriver(TMC2208Stepper* drv, HardwareSerial* ser, char axis, int microsteps) {
   ser->begin(115200);
   drv->begin();
 
   // Luon cau hinh driver (khong bo qua du test_connection loi)
   drv->rms_current(RUN_CURRENT_MA);
   drv->ihold(scaleCurrentToIhold(HOLD_CURRENT_MA, RUN_CURRENT_MA));
-  drv->microsteps(MICROSTEPS);
+  drv->microsteps(microsteps);
   drv->en_spreadCycle(false);  // StealthChop
   drv->pwm_autoscale(true);
   drv->pwm_autograd(true);
@@ -228,9 +225,9 @@ void setup() {
 
   // ========== KHOI TAO 3 DRIVER TMC2208 ==========
   Serial.println("Dang khoi tao 3 driver TMC2208...");
-  initDriver(&driverX, &SerialX, 'X');
-  initDriver(&driverY, &SerialY, 'Y');
-  initDriver(&driverZ, &SerialZ, 'Z');
+  initDriver(&driverX, &SerialX, 'X', MICROSTEPS_AXIS[0]);
+  initDriver(&driverY, &SerialY, 'Y', MICROSTEPS_AXIS[1]);
+  initDriver(&driverZ, &SerialZ, 'Z', MICROSTEPS_AXIS[2]);
 
   // Doc microstep THUC TE tu driver va tinh lai thong so
   Serial.println("--- Tinh lai STEPS_PER_MM tu microstep thuc te ---");
@@ -251,23 +248,17 @@ void setup() {
     int ms = drivers[i]->microsteps();
     if (ms == 0) ms = 1;
     maxHomingSteps[i] = (long)(100.0 * MOTOR_STEPS_PER_REV * ms / MM_PER_REV);
-    backoffSteps[i] = (int)(2.0 * MOTOR_STEPS_PER_REV * ms / MM_PER_REV);
+    backoffSteps[i] = (int)(0.3 * MOTOR_STEPS_PER_REV * ms / MM_PER_REV);
     Serial.print("  "); Serial.print(AXIS_NAMES[i]);
     Serial.print(": maxSteps="); Serial.print(maxHomingSteps[i]);
     Serial.print(", backoff="); Serial.println(backoffSteps[i]);
   }
 
-  // Tinh delay tung truc theo microstep thuc te
-  // Cong thuc: BASE_DELAY * BASE_MICROSTEP / actual_microstep
-  // -> Cung toc do vat ly bat ke microstep
-  Serial.println("--- Tinh delay tung truc ---");
+  // In delay truc tiep (da dat co dinh, khong tinh tu cong thuc)
+  Serial.println("--- Delay tung truc (us) ---");
   for (int i = 0; i < NUM_AXES; i++) {
-    int ms = drivers[i]->microsteps();
-    if (ms == 0) ms = 1;
-    homingDelayUs[i] = max(20, (int)((long)BASE_HOMING_DELAY_US * BASE_MICROSTEP / ms));
-    moveDelayUs[i]   = max(10, (int)((long)BASE_MOVE_DELAY_US * BASE_MICROSTEP / ms));
     Serial.print("  "); Serial.print(AXIS_NAMES[i]);
-    Serial.print(": 1/"); Serial.print(ms);
+    Serial.print(": 1/"); Serial.print(drivers[i]->microsteps());
     Serial.print(" -> homingDelay="); Serial.print(homingDelayUs[i]);
     Serial.print("us, moveDelay="); Serial.print(moveDelayUs[i]);
     Serial.println("us");
@@ -782,7 +773,7 @@ void moveMultiAxis(long stepsToMove[]) {
 
   // Tinh delay cho vong lap Bresenham dua tren truc co nhieu buoc nhat
   // Truc master quyet dinh toc do vong lap
-  int loopDelay = BASE_MOVE_DELAY_US;
+  int loopDelay = moveDelayUs[0];
   for (int i = 0; i < NUM_AXES; i++) {
     if (absSteps[i] == maxSteps) {
       loopDelay = moveDelayUs[i];
