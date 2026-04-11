@@ -1,0 +1,183 @@
+=========================================================
+ SO DO NOI CHAN: Nucleo-F446RE + 3x TMC2208 + 3 Stepper
+ (3-DOF Controller with UART configuration)
+=========================================================
+
+ LUU Y QUAN TRONG:
+   - USART2 (PA2/PA3) da dung cho ST-Link VCP => KHONG dung!
+   - Moi truc co 1 UART rieng de cau hinh TMC2208
+   - Tat ca driver lay VIO = 3.3V tu Nucleo
+
+=========================================================
+ 1. SO DO TONG QUAN
+=========================================================
+
+                    +------------------+
+                    |  Nucleo-F446RE   |
+                    |                  |
+   Serial Monitor   |  PA2/PA3 (VCP)  |-----> ST-Link USB (debug)
+   (115200 baud)    |                  |
+                    |  PA9(D8)  [1kΩ] |----+
+                    |  PA10(D2)        |--+ |
+                    |                  |  +--> PDN_UART driver X (USART1)
+                    |  PA1(A1)         |----> X_STEP
+                    |  PA4(A2)         |----> X_DIR
+                    |  PA6(D12)        |----> X_EN
+                    |  PA7(D11)        |<---- X_SW (limit switch)
+                    |                  |
+                    |  PC10(CN7 pin1)[1kΩ]|---+
+                    |  PC11(CN7 pin3)  |--+ |
+                    |                  |  +--> PDN_UART driver Y (USART3)
+                    |  PB3(D3)         |----> Y_STEP
+                    |  PB5(D4)         |----> Y_DIR
+                    |  PB4(D5)         |----> Y_EN
+                    |  PB0(A3)         |<---- Y_SW (limit switch)
+                    |                  |
+                    |  PC6(CN10 pin4)[1kΩ]|--+
+                    |  PC7(D9)         |--+ |
+                    |                  |  +--> PDN_UART driver Z (USART6)
+                    |  PA8(D7)         |----> Z_STEP
+                    |  PC8(CN10 pin2)  |----> Z_DIR
+                    |  PB9(D14)        |----> Z_EN
+                    |  PB8(D15)        |<---- Z_SW (limit switch)
+                    |                  |
+                    |  3.3V            |----> VIO (ca 3 driver)
+                    |  GND             |----> GND (chung)
+                    +------------------+
+
+=========================================================
+ 2. KET NOI UART TMC2208 (QUAN TRONG - lam dung cho ca 3)
+=========================================================
+
+ * TMC2208 chi co 1 chan PDN_UART, dung giao thuc 1-wire half-duplex
+ * TX va RX cua Nucleo PHAI noi cung den 1 chan PDN_UART
+
+ So do ket noi (ap dung cho tung truc):
+
+    Nucleo TX ----[1kΩ]----+-----> PDN_UART (TMC2208)
+                           |
+    Nucleo RX -------------+
+
+ Chi tiet tung truc:
+
+   Truc X:  PA9  (D8)        ---[1kΩ]---+--- PDN_UART driver X
+            PA10 (D2)         -----------+
+
+   Truc Y:  PB10 (D6)        ---[1kΩ]---+--- PDN_UART driver Y
+            PC11 (CN7 pin 3)  -----------+
+
+   Truc Z:  PC6  (CN10 pin4) ---[1kΩ]---+--- PDN_UART driver Z
+            PC7  (D9)         -----------+
+
+=========================================================
+ 3. VI TRI CHAN TREN CONNECTOR NUCLEO-F446RE
+=========================================================
+
+  UART TX/RX - can chu y:
+
+  +----------+------------------+-------------------+
+  | Truc     | TX               | RX                |
+  +----------+------------------+-------------------+
+  | X (USART1)| PA9  = D8       | PA10 = D2         |
+  | Y (USART3)| PC10 = CN7 pin 1 | PC11 = CN7 pin 3  |
+  | Z (USART6)| PC6  = CN10 pin4| PC7  = D9         |
+  +----------+------------------+-------------------+
+
+  CNs tren Morpho header:
+    CN7 pin 1  = PC10
+    CN7 pin 3  = PC11   <-- RX cua Y
+    CN10 pin 2 = PC8    <-- Z_DIR
+    CN10 pin 4 = PC6    <-- TX cua Z
+
+  LUU Y: PB11 KHONG co tren bo bat ky connector nao cua
+         Nucleo-F446RE -> KHONG dung PB11!
+
+=========================================================
+ 4. BANG TOM TAT CHAN KET NOI
+=========================================================
+
+  TRUC X (USART1: PA9/PA10):
+  +---------------------+----------+---------------------+
+  | Nucleo-F446RE       | TMC2208 X| Chuc nang           |
+  +---------------------+----------+---------------------+
+  | PA1  (A1)           | STEP     | Xung buoc           |
+  | PA4  (A2)           | DIR      | Huong quay          |
+  | PA6  (D12)          | EN       | Bat/tat driver      |
+  | PA7  (D11)          | -        | Cong tac hanh trinh |
+  | PA9  (D8)   [1kΩ]  | PDN_UART | UART TX cau hinh    |
+  | PA10 (D2)           | PDN_UART | UART RX cau hinh    |
+  +---------------------+----------+---------------------+
+
+  TRUC Y (USART3: PB10/PC11):
+  +---------------------+----------+---------------------+
+  | Nucleo-F446RE       | TMC2208 Y| Chuc nang           |
+  +---------------------+----------+---------------------+
+  | PB3  (D3)           | STEP     | Xung buoc           |
+  | PB5  (D4)           | DIR      | Huong quay          |
+  | PB4  (D5)           | EN       | Bat/tat driver      |
+  | PB0  (A3)           | -        | Cong tac hanh trinh |
+  | PC10 (CN7 pin1) [1kΩ] | PDN_UART | UART TX cau hinh    |
+  | PC11 (CN7 pin3)        | PDN_UART | UART RX cau hinh    |
+  +---------------------+----------+---------------------+
+
+  TRUC Z (USART6: PC6/PC7):
+  +---------------------+----------+---------------------+
+  | Nucleo-F446RE       | TMC2208 Z| Chuc nang           |
+  +---------------------+----------+---------------------+
+  | PA8  (D7)           | STEP     | Xung buoc           |
+  | PC8  (CN10 pin2)    | DIR      | Huong quay          |
+  | PB9  (D14)          | EN       | Bat/tat driver      |
+  | PB8  (D15)          | -        | Cong tac hanh trinh |
+  | PC6  (CN10 pin4)[1kΩ]| PDN_UART| UART TX cau hinh   |
+  | PC7  (D9)           | PDN_UART | UART RX cau hinh    |
+  +---------------------+----------+---------------------+
+
+  CHUNG:
+  | 3.3V                | VIO (ca 3 driver) -- KHONG dung 5V  |
+  | GND                 | GND chung                           |
+
+=========================================================
+ 5. KET NOI DONG CO (moi TMC2208 noi 1 dong co)
+=========================================================
+
+  TMC2208 (X, Y, va Z lam tuong tu):
+  +----------------+         Stepper Motor
+  |  1A            |-------> Cuon A+
+  |  1B            |-------> Cuon A-
+  |  2A            |-------> Cuon B+
+  |  2B            |-------> Cuon B-
+  +----------------+
+
+  * Neu dong co quay sai chieu: dao 1A<->1B (hoac 2A<->2B)
+
+=========================================================
+ 6. NGUON DIEN
+=========================================================
+
+  Nguon VM (12V-36V DC)
+  +------------------+        3x TMC2208
+  |  V+              |------> VM  (moi driver)
+  |  GND             |------> GND (moi driver)
+  +------------------+
+  * Dat tu dien >= 100uF gan chan VM moi driver
+
+  Nucleo-F446RE
+  +------------------+        3x TMC2208
+  |  3.3V            |------> VIO (moi driver) -- KHONG dung 5V
+  |  GND             |------> GND chung voi nguon VM
+  +------------------+
+
+  QUAN TRONG: GND cua Nucleo, cac driver va nguon 12V/24V
+              PHAI duoc noi chung voi nhau!
+
+=========================================================
+ 7. CAU HINH ARDUINO IDE
+=========================================================
+
+  Board:          "Nucleo-64"
+  Board part:     "Nucleo F446RE"
+  Upload method:  "STM32CubeProgrammer (SWD)"
+  USB support:    "None"
+  Library:        TMCStepper (cai qua Library Manager)
+
+=========================================================

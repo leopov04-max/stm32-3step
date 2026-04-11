@@ -1,0 +1,137 @@
+=========================================================
+ SO DO NOI CHAN: Nucleo-F446RE + TMC2208 + Stepper Motor
+=========================================================
+
+ LUU Y QUAN TRONG:
+   - Nucleo-F446RE: USART2 (PA2/PA3) da dung cho ST-Link VCP (Serial Monitor)
+   - TMC2208 UART dung USART1: PA9 (TX), PA10 (RX)
+   - Nguon logic (VIO) trên TMC2208 lay tu 3.3V cua Nucleo
+
+=========================================================
+ 1. NUCLEO-F446RE  -->  TMC2208 Driver Board
+=========================================================
+
+  Nucleo-F446RE              TMC2208
+  +--------------+           +----------------+
+  |              |           |                |
+  |  PA4  (A2)  |---------->|  DIR           |
+  |  PA5  (D13) |---------->|  STEP          |
+  |  PA7  (D11) |---------->|  EN            |
+  |              |           |                |
+  |  PA9  (D8)  |---[1kΩ]-->|  PDN_UART      |
+  |  PA10 (D2)  |---------->|  (cung chan)    |
+  |              |           |                |
+  |  3.3V       |---------->|  VIO           |
+  |  GND        |---------->|  GND           |
+  +--------------+           +----------------+
+
+  CHI TIET NOI UART (QUAN TRONG):
+
+      PA9 (TX) ---[1kΩ]---+
+                           |
+                       PDN_UART (TMC2208)
+                           |
+      PA10 (RX) -----------+
+
+  * Dien tro 1kΩ giua PA9 va PDN_UART la BAT BUOC
+    (TMC2208 dung giao thuc 1-wire UART tren 1 chan PDN_UART)
+  * PA10 noi truc tiep (khong qua dien tro)
+
+=========================================================
+ 2. TMC2208  -->  Stepper Motor (4 day)
+=========================================================
+
+  TMC2208                   Stepper Motor
+  +----------------+        +----------------+
+  |  1A            |------->|  Cuon A+       |
+  |  1B            |------->|  Cuon A-       |
+  |  2A            |------->|  Cuon B+       |
+  |  2B            |------->|  Cuon B-       |
+  +----------------+        +----------------+
+
+  * Kiem tra datasheet dong co de xac dinh dung cap cuon day
+  * Neu dong co chay sai huong: dao 1A <-> 1B hoac 2A <-> 2B
+
+=========================================================
+ 3. CONG TAC HANH TRINH (Limit Switch)
+=========================================================
+
+  Nucleo-F446RE              Cong tac
+  +--------------+           +--------+
+  |  PB0  (A3)  |---------->|  COM   |
+  |  GND        |---------->|  NO    |
+  +--------------+           +--------+
+
+  * Loai: Normally Open (NO)
+  * PB0 duoc cau hinh INPUT_PULLUP trong code
+  * Khi nhan: PB0 = LOW (noi dat qua cong tac)
+  * Khi nha:  PB0 = HIGH (keo len boi dien tro noi pullup)
+
+=========================================================
+ 4. NGUON DIEN
+=========================================================
+
+  Nguon 12V/24V DC          TMC2208
+  +--------------+           +----------------+
+  |  V+          |---------->|  VM  (8-36V)   |
+  |  GND         |---------->|  GND           |
+  +--------------+           +----------------+
+
+  Nucleo-F446RE              TMC2208
+  +--------------+           +----------------+
+  |  3.3V        |---------->|  VIO (logic)   |
+  |  GND         |---------->|  GND (chung)   |
+  +--------------+           +----------------+
+
+  * VM: Nguon dong co (8V - 36V), dung tu loc >=100uF gan chan VM
+  * VIO: Nguon logic 3.3V lay tu Nucleo (KHONG dung 5V)
+  * GND cua Nucleo va nguon dong co PHAI noi chung
+
+=========================================================
+ 5. BANG TOM TAT CHAN KET NOI
+=========================================================
+
+  +------------------+---------------+---------------------+
+  | Nucleo-F446RE    | TMC2208       | Chuc nang           |
+  +------------------+---------------+---------------------+
+  | PA4  (A2)        | DIR           | Huong quay          |
+  | PA5  (D13)       | STEP          | Xung buoc           |
+  | PA7  (D11)       | EN            | Bat/tat driver      |
+  | PA9  (D8) [1kΩ]  | PDN_UART      | UART TX (cau hinh)  |
+  | PA10 (D2)        | PDN_UART      | UART RX (cau hinh)  |
+  | 3.3V             | VIO           | Nguon logic         |
+  | GND              | GND           | Mass chung          |
+  +------------------+---------------+---------------------+
+  | PB0  (A3)        | -             | Cong tac hanh trinh |
+  +------------------+---------------+---------------------+
+
+=========================================================
+ 6. SO SANH VOI BLUE PILL (phien ban cu)
+=========================================================
+
+  +------------------+---------------------+---------------------+
+  | Chuc nang        | Blue Pill           | Nucleo-F446RE       |
+  +------------------+---------------------+---------------------+
+  | Serial (debug)   | USART1 (PA9/PA10)   | USART2 (PA2/PA3)    |
+  |                  | qua USB-Serial      | qua ST-Link VCP     |
+  +------------------+---------------------+---------------------+
+  | TMC2208 UART     | USART2 (PA2/PA3)    | USART1 (PA9/PA10)   |
+  +------------------+---------------------+---------------------+
+  | DIR              | PA4                 | PA4  (giu nguyen)   |
+  | STEP             | PA5                 | PA5  (giu nguyen)   |
+  | EN               | PA7                 | PA7  (giu nguyen)   |
+  | Limit Switch     | PB0                 | PB0  (giu nguyen)   |
+  +------------------+---------------------+---------------------+
+
+  => Chi can doi UART, cac chan dieu khien giu nguyen!
+
+=========================================================
+ 7. CAU HINH ARDUINO IDE
+=========================================================
+
+  Board:          "Nucleo-64"  hoac  "Generic STM32F4 series"
+  Board part:     "Nucleo F446RE"
+  Upload method:  "STM32CubeProgrammer (SWD)"  hoac  "Mass Storage"
+  USB support:    "None" (dung ST-Link VCP cho Serial)
+
+=========================================================
