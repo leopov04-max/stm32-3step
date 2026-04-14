@@ -1,0 +1,314 @@
+=========================================================
+ SO DO NOI CHAN: STM32F103C8T6 Blue Pill + 3x TMC2240 MKS V1.0 (SPI)
+ + 3 Stepper Motor + 3 Cong Tac Hanh Trinh
+=========================================================
+
+ LUU Y QUAN TRONG:
+   - STM32F103C8T6 Blue Pill - 3.3V logic, 72MHz
+   - USB CDC dung cho Serial Monitor (khong can ST-Link)
+   - SPI1 dung chung cho ca 3 driver TMC2240 (moi driver 1 CS rieng)
+   - TMC2240 MKS V1.0: Giao tiep SPI, KHONG dung UART
+   - VCC_IO (VIO) cua TMC2240 = 3.3V tu Blue Pill
+   - LUU Y: Neu USB khong nhan, han them R 1.5kOhm tu PA12 len 3.3V
+
+=========================================================
+ 1. SO DO TONG QUAN
+=========================================================
+
+                    +------------------+
+                    | STM32F103C8T6    |
+                    | Blue Pill        |
+                    |                  |
+   Serial Monitor   |  USB (PA11/PA12)|-----> USB-C/Micro (debug)
+   (115200 baud)    |                  |
+                    |                  |
+   === SPI1 BUS (CHUNG CHO 3 DRIVER) ===
+                    |  PA5  (SCK)      |-----> SCK (ca 3 driver)
+                    |  PA6  (MISO)     |<----- SDO (ca 3 driver)
+                    |  PA7  (MOSI)     |-----> SDI (ca 3 driver)
+                    |                  |
+   === DRIVER X ========================
+                    |  PA4  (CS_X)     |-----> CSN driver X
+                    |  PA0  (X_STEP)   |-----> STEP driver X
+                    |  PA1  (X_DIR)    |-----> DIR driver X
+                    |  PA2  (X_EN)     |-----> EN driver X
+                    |  PB13 (X_SW)     |<---- Cong tac hanh trinh X
+                    |                  |
+   === DRIVER Y ========================
+                    |  PB0  (CS_Y)     |-----> CSN driver Y
+                    |  PA3  (Y_STEP)   |-----> STEP driver Y
+                    |  PA8  (Y_DIR)    |-----> DIR driver Y
+                    |  PA9  (Y_EN)     |-----> EN driver Y
+                    |  PB14 (Y_SW)     |<---- Cong tac hanh trinh Y
+                    |                  |
+   === DRIVER Z ========================
+                    |  PB1  (CS_Z)     |-----> CSN driver Z
+                    |  PA10 (Z_STEP)   |-----> STEP driver Z
+                    |  PB10 (Z_DIR)    |-----> DIR driver Z
+                    |  PB12 (Z_EN)     |-----> EN driver Z
+                    |  PB15 (Z_SW)     |<---- Cong tac hanh trinh Z
+                    |                  |
+   === NGUON ==============================
+                    |  3.3V            |-----> VCC_IO (ca 3 driver)
+                    |  GND             |-----> GND (chung)
+                    +------------------+
+
+=========================================================
+ 2. KET NOI SPI (QUAN TRONG - lam dung cho ca 3 driver)
+=========================================================
+
+ * TMC2240 giao tiep SPI Mode 3 (CPOL=1, CPHA=1)
+ * Bus SPI chung: SCK, MOSI (SDI), MISO (SDO)
+ * Moi driver co 1 chan CS (Chip Select) rieng - Active LOW
+
+ So do ket noi SPI:
+
+    Blue Pill                TMC2240 Driver X/Y/Z
+    +----------+             +------------------+
+    |          |             |                  |
+    | PA5 SCK  |------------>| SCK (chung)      |
+    | PA6 MISO |<------------| SDO (chung)      |
+    | PA7 MOSI |------------>| SDI (chung)      |
+    |          |             |                  |
+    | PA4      |------------>| CSN driver X     |
+    | PB0      |------------>| CSN driver Y     |
+    | PB1      |------------>| CSN driver Z     |
+    +----------+             +------------------+
+
+ * Cac duong SPI nen ngan (< 15cm), tranh nhieu
+ * Moi chan CS co the them dien tro pull-up 10kOhm len 3.3V
+   (dam bao CS = HIGH khi MCU chua khoi dong)
+ * KHONG can dien tro noi tiep tren SCK/MOSI/MISO
+
+=========================================================
+ 3. KET NOI STEP/DIR/EN (DIEU KHIEN DONG CO)
+=========================================================
+
+ * STEP: Xung buoc - moi xung canh len = 1 microstep
+ * DIR: Huong quay (HIGH/LOW)
+ * EN: Enable driver (LOW = bat, HIGH = tat)
+
+   Truc X:
+     PA0 (X_STEP) ----> STEP driver X
+     PA1 (X_DIR)  ----> DIR  driver X
+     PA2 (X_EN)   ----> EN   driver X
+
+   Truc Y:
+     PA3 (Y_STEP) ----> STEP driver Y
+     PA8 (Y_DIR)  ----> DIR  driver Y
+     PA9 (Y_EN)   ----> EN   driver Y
+
+   Truc Z:
+     PA10 (Z_STEP) ----> STEP driver Z
+     PB10 (Z_DIR)  ----> DIR  driver Z
+     PB12 (Z_EN)   ----> EN   driver Z
+
+=========================================================
+ 4. CONG TAC HANH TRINH (Limit Switch)
+=========================================================
+
+   Blue Pill                Cong tac X
+   +----------+             +--------+
+   | PB13     |------------>| COM    |
+   | GND      |------------>| NO     |
+   +----------+             +--------+
+
+   Blue Pill                Cong tac Y
+   +----------+             +--------+
+   | PB14     |------------>| COM    |
+   | GND      |------------>| NO     |
+   +----------+             +--------+
+
+   Blue Pill                Cong tac Z
+   +----------+             +--------+
+   | PB15     |------------>| COM    |
+   | GND      |------------>| NO     |
+   +----------+             +--------+
+
+   * Loai: Normally Open (NO)
+   * Cac chan SW duoc cau hinh INPUT_PULLUP trong code
+   * Khi nhan: SW = LOW (noi dat qua cong tac)
+   * Khi nha:  SW = HIGH (keo len boi dien tro noi pullup)
+
+=========================================================
+ 5. KET NOI TMC2240 MKS V1.0 --> STEPPER MOTOR (4 day)
+=========================================================
+
+   TMC2240                  Stepper Motor
+   +----------------+       +----------------+
+   |  M1A (1A)      |------>|  Cuon A+       |
+   |  M1B (1B)      |------>|  Cuon A-       |
+   |  M2A (2A)      |------>|  Cuon B+       |
+   |  M2B (2B)      |------>|  Cuon B-       |
+   +----------------+       +----------------+
+
+   * Kiem tra datasheet dong co de xac dinh dung cap cuon day
+   * Neu dong co chay sai huong: dao M1A <-> M1B hoac M2A <-> M2B
+
+=========================================================
+ 6. NGUON DIEN
+=========================================================
+
+   Nguon 12V/24V DC         TMC2240 MKS V1.0
+   +----------+             +------------------+
+   | V+       |------------>| VM  (8-36V)      |
+   | GND      |------------>| GND              |
+   +----------+             +------------------+
+
+   Blue Pill                TMC2240 MKS V1.0
+   +----------+             +------------------+
+   | 3.3V     |------------>| VCC_IO (logic)   |
+   | GND      |------------>| GND (chung)      |
+   +----------+             +------------------+
+
+   * VM: Nguon dong co (8V - 36V), dung tu loc >=100uF gan chan VM
+   * VCC_IO: Nguon logic 3.3V lay tu Blue Pill (KHONG dung 5V)
+   * GND cua Blue Pill va nguon dong co PHAI noi chung
+   * Nguon Blue Pill: qua USB hoac chan 5V (co regulator 3.3V on-board)
+
+=========================================================
+ 7. KET NOI CHI TIET TMC2240 MKS V1.0 MODULE
+=========================================================
+
+   Nhan chan tren module MKS TMC2240 V1.0 (co the khac theo phien ban):
+
+   +-----------------------------------------------+
+   |  MKS TMC2240 V1.0                             |
+   |                                               |
+   |  Phia SPI:          Phia Motor:               |
+   |  +--------+        +--------+                 |
+   |  | SDI    |        | EN     |                 |
+   |  | SDO    |        | STEP   |                 |
+   |  | SCK    |        | DIR    |                 |
+   |  | CSN    |        | GND    |                 |
+   |  | GND    |        | VM     |                 |
+   |  | VCC_IO |        | M1A    |                 |
+   |  | DIAG   |        | M1B    |                 |
+   |  +--------+        | M2A    |                 |
+   |                     | M2B    |                 |
+   |                     +--------+                 |
+   +-----------------------------------------------+
+
+   * SDI  = SPI MOSI (du lieu tu MCU -> driver)
+   * SDO  = SPI MISO (du lieu tu driver -> MCU)
+   * SCK  = SPI Clock
+   * CSN  = Chip Select (Active LOW)
+   * DIAG = Co the bo trong (dung cho StallGuard/loi)
+
+=========================================================
+ 8. BANG TOM TAT CHAN KET NOI
+=========================================================
+
+  +------------------+-------------------+-------------------+
+  | STM32F103C8T6    | TMC2240 / Cong tac| Chuc nang         |
+  | Blue Pill        |                   |                   |
+  +------------------+-------------------+-------------------+
+  |              SPI1 BUS (chung)                            |
+  +------------------+-------------------+-------------------+
+  | PA5              | SCK (ca 3)        | SPI Clock         |
+  | PA6              | SDO (ca 3)        | SPI MISO          |
+  | PA7              | SDI (ca 3)        | SPI MOSI          |
+  +------------------+-------------------+-------------------+
+  |              TRUC X                                      |
+  +------------------+-------------------+-------------------+
+  | PA4              | CSN driver X      | SPI Chip Select X |
+  | PA0              | STEP driver X     | Xung buoc X       |
+  | PA1              | DIR driver X      | Huong quay X      |
+  | PA2              | EN driver X       | Bat/tat driver X  |
+  | PB13             | Cong tac X (COM)  | Limit switch X    |
+  +------------------+-------------------+-------------------+
+  |              TRUC Y                                      |
+  +------------------+-------------------+-------------------+
+  | PB0              | CSN driver Y      | SPI Chip Select Y |
+  | PA3              | STEP driver Y     | Xung buoc Y       |
+  | PA8              | DIR driver Y      | Huong quay Y      |
+  | PA9              | EN driver Y       | Bat/tat driver Y  |
+  | PB14             | Cong tac Y (COM)  | Limit switch Y    |
+  +------------------+-------------------+-------------------+
+  |              TRUC Z                                      |
+  +------------------+-------------------+-------------------+
+  | PB1              | CSN driver Z      | SPI Chip Select Z |
+  | PA10             | STEP driver Z     | Xung buoc Z       |
+  | PB10             | DIR driver Z      | Huong quay Z      |
+  | PB12             | EN driver Z       | Bat/tat driver Z  |
+  | PB15             | Cong tac Z (COM)  | Limit switch Z    |
+  +------------------+-------------------+-------------------+
+  |              NGUON                                       |
+  +------------------+-------------------+-------------------+
+  | 3.3V             | VCC_IO (ca 3)     | Logic level       |
+  | GND              | GND (chung)       | Mass chung        |
+  | -                | VM (8-36V)        | Nguon dong co     |
+  +------------------+-------------------+-------------------+
+
+=========================================================
+ 9. VI TRI CHAN TREN BLUE PILL STM32F103C8T6
+=========================================================
+
+  (Nhin tu phia tren, USB o phia tren)
+
+           Micro-USB
+          +------------------+
+   B12*  [|                  |]  3V3
+   B13*  [|                  |]  GND
+   B14*  [|                  |]  5V
+   B15*  [|  STM32F103C8T6   |]  B10*
+   A8*   [|  Blue Pill       |]  B2
+   A9*   [|                  |]  B1*
+   A10*  [|                  |]  B0*
+   A15   [|                  |]  A7* (MOSI)
+   B3    [|                  |]  A6* (MISO)
+   B4    [|                  |]  A5* (SCK)
+   B5    [|                  |]  A4* (CS_X)
+   B6    [|                  |]  A3* (Y_STEP)
+   B7    [|                  |]  A2* (X_EN)
+   B8    [|                  |]  A1* (X_DIR)
+   B9    [|                  |]  A0* (X_STEP)
+          +------------------+
+          | 3V3  GND  BOOT0 |
+          +------------------+
+
+  * = Chan dang su dung
+
+  Chan KHONG dung duoc (da su dung noi bo):
+    PA11, PA12 = USB D-, D+
+    PA13, PA14 = SWD (Debug)
+    PC13 = LED on-board (dung lam den bao trang thai)
+  LUU Y: Neu USB khong nhan, han R 1.5kOhm tu PA12 len 3.3V
+         hoac thay R10 tren board thanh 1.5kOhm
+
+=========================================================
+ 10. LUU Y QUAN TRONG KHI DI DAY
+=========================================================
+
+  1. SPI:
+     - Day SPI nen ngan nhat co the (< 15cm)
+     - Dung day xoan doi (twisted pair) cho SCK + GND
+     - Them tu 100nF giua VCC_IO va GND tai moi driver
+     - Neu nhieu: giam toc do SPI tu 4MHz xuong 1MHz trong code
+
+  2. NGUON:
+     - Tu loc >=100uF + 100nF sat chan VM cua moi driver
+     - GND cua tat ca driver va Blue Pill PHAI noi chung
+     - Khong cap nguon dong co (VM) qua USB!
+
+  3. CONG TAC HANH TRINH:
+     - Loai NO (Normally Open) - 2 chan COM va NO
+     - Khong can dien tro pull-up (da co trong MCU)
+     - Day cong tac nen co boc chan nhieu (shielded cable)
+       hoac them tu 100nF giua chan SW va GND
+
+  4. ARDUINO IDE:
+     - Cai dat board package: STM32duino (stm32duino.com)
+     - Board: "Generic STM32F1 series"
+     - Board part number: "BluePill F103C8"
+     - USB support: "CDC (generic 'Serial' supersede U(S)ART)"
+     - Upload method: "STM32CubeProgrammer (SWD)" hoac "Serial"
+     - Hoac dung ST-Link V2 qua SWD (PA13/PA14)
+     - LUU Y: Neu USB khong nhan, han R 1.5kOhm tu PA12 len 3.3V
+
+  5. R_SENSE:
+     - Code mac dinh R_SENSE = 0.075 Ohm (MKS TMC2240 V1.0)
+     - Kiem tra lai tren board cua ban! (co the la 0.11 hoac 0.05)
+     - Neu sai R_SENSE: dong dien KHONG chinh xac!
+
+=========================================================

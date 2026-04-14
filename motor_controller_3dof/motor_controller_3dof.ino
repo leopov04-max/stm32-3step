@@ -10,7 +10,7 @@
 // LUU Y UART:
 //   USART2 (PA2/PA3) da dung cho ST-Link VCP (Serial debug)
 //   Truc X --> USART1 : TX=PA9(D8),  RX=PA10(D2)
-//   Truc Y --> USART3 : TX=PB10(D6), RX=PC11(CN10-34)
+//   Truc Y --> USART3 : TX=PC10(CN7-1), RX=PC11(CN7-3)
 //   Truc Z --> USART6 : TX=PC6(CN10-4), RX=PC7(D9)
 // ==========================================
 
@@ -32,7 +32,7 @@
 HardwareSerial SerialX(PA10, PA9);   // RX, TX  [USART1]
 
 // --- Truc Y ---
-// LUU Y: PB3(D3)/PB4(D5) la chan JTAG, PB10(D6) la USART3_TX -> KHONG dung!
+// USART3: TX=PC10(CN7 pin1), RX=PC11(CN7 pin3) - CA HAI tren Morpho CN7
 #define Y_DIR_PIN   PA0    // A0
 #define Y_STEP_PIN  PC1    // A4 (CN8 pin5)
 #define Y_EN_PIN    PB6    // D10
@@ -79,11 +79,15 @@ const int DIR_PINS[NUM_AXES]  = {X_DIR_PIN,  Y_DIR_PIN,  Z_DIR_PIN};
 const int STEP_PINS[NUM_AXES] = {X_STEP_PIN, Y_STEP_PIN, Z_STEP_PIN};
 const int EN_PINS[NUM_AXES]   = {X_EN_PIN,   Y_EN_PIN,   Z_EN_PIN};
 const int SW_PINS[NUM_AXES]   = {X_SW_PIN,   Y_SW_PIN,   Z_SW_PIN};
+const int UART_TX_PINS[NUM_AXES] = {PA9, PC10, PC6};
 const char AXIS_NAMES[NUM_AXES] = {'X', 'Y', 'Z'};
 
 // Trang thai cac truc
 long currentPositionSteps[NUM_AXES] = {0, 0, 0};
 bool isHomed[NUM_AXES] = {false, false, false};
+
+// TAM VO HIEU HOA TRUC - dat false de bo qua truc do
+bool axisEnabled[NUM_AXES] = {true, true, true};  // X=ON, Y=ON, Z=ON
 
 // Thong so homing - tinh rieng tung truc tu microstep thuc te
 long maxHomingSteps[NUM_AXES] = {20000, 20000, 20000};
@@ -137,7 +141,17 @@ uint8_t scaleCurrentToIhold(int holdMa, int runMa) {
 // ==========================================
 void initDriver(TMC2208Stepper* drv, HardwareSerial* ser, char axis, int microsteps) {
   ser->begin(115200);
+  delay(200);  // Cho UART + driver on dinh (tang tu 100ms)
   drv->begin();
+  delay(200);  // Cho driver xu ly GCONF (tang tu 50ms)
+
+  // Thu ket noi truoc khi cau hinh, retry 3 lan
+  uint8_t result = 255;
+  for (int retry = 0; retry < 3; retry++) {
+    result = drv->test_connection();
+    if (result == 0) break;
+    delay(100);
+  }
 
   // Luon cau hinh driver (khong bo qua du test_connection loi)
   drv->rms_current(RUN_CURRENT_MA);
@@ -151,28 +165,174 @@ void initDriver(TMC2208Stepper* drv, HardwareSerial* ser, char axis, int microst
   Serial.print(axis);
   Serial.print(": ");
   Serial.flush();
-  uint8_t result = drv->test_connection();
   if (result == 0) {
-    Serial.println("[OK]");
-  } else {
-    Serial.print("[CANH BAO] Ma: ");
-    Serial.print(result);
-    Serial.print(" - Da cau hinh: ");
+    // Doc lai gia tri thuc te tu chip de xac nhan
+    Serial.print("[OK] ");
     Serial.print(drv->rms_current());
     Serial.print("mA, 1/");
     Serial.println(drv->microsteps());
+  } else {
+    Serial.print("[LOI] Ma: ");
+    Serial.print(result);
+    Serial.println(" - UART KHONG PHAN HOI!");
+    Serial.print("    (Ma 1=sai du lieu, Ma 2=khong phan hoi)");
+    Serial.println();
   }
   Serial.flush();
+}
+
+// ==========================================
+// CHAN DOAN UART - KIEM TRA KET NOI VAT LY
+// ==========================================
+HardwareSerial* serials[NUM_AXES] = {&SerialX, &SerialY, &SerialZ};
+
+void diagUartEcho() {
+  Serial.println("\n===== CHAN DOAN UART TMC2208 =====");
+  Serial.println("[1] ECHO TEST (kiem tra ket noi vat ly TX/RX -> PDN_UART)");
+  Serial.println("    Neu KHONG co echo -> day noi sai hoac dut");
+  for (int i = 0; i < NUM_AXES; i++) {
+    if (!axisEnabled[i]) {
+      Serial.print("  Truc "); Serial.print(AXIS_NAMES[i]); Serial.println(": [BO QUA - truc tam tat]");
+      continue;
+    }
+    // Xoa buffer
+    while (serials[i]->available()) serials[i]->read();
+    // Gui byte test
+    serials[i]->write((uint8_t)0x55);
+    serials[i]->flush();  // Cho gui xong
+    delay(10);
+    Serial.print("  Truc "); Serial.print(AXIS_NAMES[i]); Serial.print(": ");
+    if (serials[i]->available() > 0) {
+      uint8_t echo = serials[i]->read();
+      Serial.print("Echo=0x"); Serial.print(echo, HEX);
+      if (echo == 0x55) {
+        Serial.println(" [OK - ket noi vat ly tot]");
+      } else {
+        Serial.println(" [SAI BYTE - nhieu tren duong truyen]");
+      }
+    } else {
+      Serial.println("KHONG CO ECHO! -> Kiem tra day noi TX/RX -> PDN_UART");
+    }
+  }
+}
+
+void diagMultiBaud() {
+  Serial.println("\n[2] THU NHIEU BAUD RATE (tim baud rate dung cua TMC2208)");
+  const long baudRates[] = {115200, 57600, 38400, 19200, 9600};
+  const int numBauds = 5;
+  for (int b = 0; b < numBauds; b++) {
+    Serial.print("  Baud "); Serial.print(baudRates[b]); Serial.print(": ");
+    for (int i = 0; i < NUM_AXES; i++) {
+      if (!axisEnabled[i]) continue;
+      serials[i]->end();
+      serials[i]->begin(baudRates[b]);
+      delay(50);
+    }
+    // Thu doc GCONF register tu moi driver
+    for (int i = 0; i < NUM_AXES; i++) {
+      if (!axisEnabled[i]) { Serial.print(AXIS_NAMES[i]); Serial.print("=tat "); continue; }
+      uint8_t res = drivers[i]->test_connection();
+      Serial.print(AXIS_NAMES[i]); Serial.print("=");
+      if (res == 0) Serial.print("OK!");
+      else { Serial.print("loi"); Serial.print(res); }
+      Serial.print(" ");
+    }
+    Serial.println();
+  }
+  // Khoi phuc baud 115200
+  for (int i = 0; i < NUM_AXES; i++) {
+    if (!axisEnabled[i]) continue;
+    serials[i]->end();
+    serials[i]->begin(115200);
+  }
+  delay(50);
+}
+
+void diagRawRead() {
+  Serial.println("\n[3] DOC RAW REGISTER (gui lenh thu cong, khong qua library)");
+  for (int i = 0; i < NUM_AXES; i++) {
+    if (!axisEnabled[i]) {
+      Serial.print("  Truc "); Serial.print(AXIS_NAMES[i]); Serial.println(": [BO QUA]");
+      continue;
+    }
+    // Gui read request cho GCONF (reg 0x00)
+    // TMC2208 read datagram: sync=0x05, slave_addr=0x00, reg=0x00, crc
+    uint8_t txBuf[4] = {0x05, 0x00, 0x00, 0x00};
+    // Tinh CRC
+    uint8_t crc = 0;
+    for (int j = 0; j < 3; j++) {
+      uint8_t byte_val = txBuf[j];
+      for (int k = 0; k < 8; k++) {
+        if ((crc >> 7) ^ (byte_val & 0x01)) crc = (crc << 1) ^ 0x07;
+        else crc = crc << 1;
+        byte_val >>= 1;
+      }
+    }
+    txBuf[3] = crc;
+    // Xoa buffer
+    while (serials[i]->available()) serials[i]->read();
+    // Gui
+    serials[i]->write(txBuf, 4);
+    serials[i]->flush();
+    delay(20);
+    Serial.print("  Truc "); Serial.print(AXIS_NAMES[i]); Serial.print(": RX=");
+    int count = 0;
+    while (serials[i]->available() && count < 16) {
+      uint8_t b = serials[i]->read();
+      if (b < 0x10) Serial.print("0");
+      Serial.print(b, HEX);
+      Serial.print(" ");
+      count++;
+    }
+    if (count == 0) {
+      Serial.print("(trong)");
+    } else if (count <= 4) {
+      Serial.print(" <- chi co echo, driver KHONG tra loi");
+    } else {
+      Serial.print(" <- co phan hoi! ("); Serial.print(count); Serial.print(" bytes)");
+    }
+    Serial.println();
+  }
+}
+
+void runFullDiag() {
+  // Kiem tra trang thai chan truoc
+  Serial.println("\n===== CHAN DOAN UART TMC2208 =====");
+  Serial.println("[0] TRANG THAI CHAN:");
+  for (int i = 0; i < NUM_AXES; i++) {
+    if (!axisEnabled[i]) { Serial.print("  "); Serial.print(AXIS_NAMES[i]); Serial.println(": [TAT]"); continue; }
+    Serial.print("  "); Serial.print(AXIS_NAMES[i]);
+    Serial.print(": EN="); Serial.print(digitalRead(EN_PINS[i]));
+    Serial.print("(0=bat) TX_pin="); Serial.print(UART_TX_PINS[i]);
+    Serial.print(" Motor bo cung: ");
+    // Tat driver, cho, bat lai -> kiem tra EN co tac dung khong
+    digitalWrite(EN_PINS[i], HIGH); delay(50);
+    Serial.print("EN=HIGH(tat) ");
+    digitalWrite(EN_PINS[i], LOW); delay(50);
+    Serial.println("EN=LOW(bat)");
+  }
+  diagUartEcho();
+  diagMultiBaud();
+  diagRawRead();
+  Serial.println("\n===== KET LUAN =====");
+  Serial.println("- Neu echo KHONG co: kiem tra day noi, dien tro 1kOhm, chan PDN_UART");
+  Serial.println("- Neu echo CO nhung driver khong tra loi:");
+  Serial.println("  + Kiem tra module TMC2208 co dien tro pull-down tren PDN_UART?");
+  Serial.println("  + Do dien ap tren chan PDN_UART bang VOM (can > 2.3V)");
+  Serial.println("  + Kiem tra VIO co duoc cap 3.3V khong?");
+  Serial.println("  + Motor co bo cung khi cap dien? (Neu khong -> driver dang tat)");
+  Serial.println("===================================\n");
 }
 
 // ==========================================
 // IN TRANG THAI TAT CA 3 DRIVER
 // ==========================================
 void printAllDriverStatus() {
-  Serial.println("\n===== TRANG THAI 3 DRIVER TMC2208 =====");
+  Serial.println("\n===== TRANG THAI DRIVER TMC2208 =====");
   for (int i = 0; i < NUM_AXES; i++) {
     Serial.print("--- Truc ");
     Serial.print(AXIS_NAMES[i]);
+    if (!axisEnabled[i]) { Serial.println(" --- [TAM TAT]"); continue; }
     Serial.println(" ---");
     Serial.print("  Dong RMS  : "); Serial.print(drivers[i]->rms_current()); Serial.println(" mA");
     Serial.print("  Microstep : 1/"); Serial.println(drivers[i]->microsteps());
@@ -220,19 +380,50 @@ void setup() {
     pinMode(STEP_PINS[i], OUTPUT);
     pinMode(DIR_PINS[i], OUTPUT);
     pinMode(SW_PINS[i], INPUT_PULLUP);
-    digitalWrite(EN_PINS[i], LOW); // Bat driver
+    if (axisEnabled[i]) {
+      digitalWrite(EN_PINS[i], LOW); // Bat driver
+    } else {
+      digitalWrite(EN_PINS[i], HIGH); // Tat driver (truc bi vo hieu hoa)
+    }
   }
 
-  // ========== KHOI TAO 3 DRIVER TMC2208 ==========
-  Serial.println("Dang khoi tao 3 driver TMC2208...");
-  initDriver(&driverX, &SerialX, 'X', MICROSTEPS_AXIS[0]);
-  initDriver(&driverY, &SerialY, 'Y', MICROSTEPS_AXIS[1]);
-  initDriver(&driverZ, &SerialZ, 'Z', MICROSTEPS_AXIS[2]);
+  // ========== DANH THUC TMC2208 TRUOC KHI INIT UART ==========
+  // Dat TX pin HIGH = PDN_UART HIGH = thoat power-down
+  Serial.println("Pre-wake TMC2208: dat PDN_UART HIGH...");
+  for (int i = 0; i < NUM_AXES; i++) {
+    if (!axisEnabled[i]) continue;
+    pinMode(UART_TX_PINS[i], OUTPUT);
+    digitalWrite(UART_TX_PINS[i], HIGH);
+    Serial.print("  TX_"); Serial.print(AXIS_NAMES[i]);
+    Serial.print(" (pin "); Serial.print(UART_TX_PINS[i]);
+    Serial.print("): "); Serial.println(digitalRead(UART_TX_PINS[i]));
+  }
+  delay(500);  // Cho TMC2208 thoat power-down (can ~200ms)
+  Serial.println("  -> Cho 500ms...");
+
+  // ========== KHOI TAO DRIVER TMC2208 ==========
+  Serial.println("Dang khoi tao driver TMC2208...");
+  HardwareSerial* serList[NUM_AXES] = {&SerialX, &SerialY, &SerialZ};
+  for (int i = 0; i < NUM_AXES; i++) {
+    if (axisEnabled[i]) {
+      initDriver(drivers[i], serList[i], AXIS_NAMES[i], MICROSTEPS_AXIS[i]);
+    } else {
+      Serial.print("  Driver "); Serial.print(AXIS_NAMES[i]);
+      Serial.println(": [BO QUA - truc tam tat]");
+    }
+  }
 
   // Doc microstep THUC TE tu driver va tinh lai thong so
   Serial.println("--- Tinh lai STEPS_PER_MM tu microstep thuc te ---");
   int maxMs = 0;
   for (int i = 0; i < NUM_AXES; i++) {
+    if (!axisEnabled[i]) {
+      // Dung gia tri mac dinh cho truc bi tat
+      STEPS_PER_MM[i] = (float)(MOTOR_STEPS_PER_REV * MICROSTEPS_AXIS[i]) / MM_PER_REV;
+      Serial.print("  "); Serial.print(AXIS_NAMES[i]);
+      Serial.print(": [TAT] dung mac dinh STEPS_PER_MM = "); Serial.println(STEPS_PER_MM[i], 1);
+      continue;
+    }
     int ms = drivers[i]->microsteps();
     if (ms == 0) ms = 1;  // 0 = full step
     STEPS_PER_MM[i] = (float)(MOTOR_STEPS_PER_REV * ms) / MM_PER_REV;
@@ -245,7 +436,7 @@ void setup() {
   // VD: 1/256 -> 100mm * 6400 = 640000 buoc, 1/16 -> 100mm * 400 = 40000 buoc
   Serial.println("--- Tinh homing steps tung truc ---");
   for (int i = 0; i < NUM_AXES; i++) {
-    int ms = drivers[i]->microsteps();
+    int ms = axisEnabled[i] ? drivers[i]->microsteps() : MICROSTEPS_AXIS[i];
     if (ms == 0) ms = 1;
     maxHomingSteps[i] = (long)(100.0 * MOTOR_STEPS_PER_REV * ms / MM_PER_REV);
     backoffSteps[i] = (int)(0.3 * MOTOR_STEPS_PER_REV * ms / MM_PER_REV);
@@ -258,6 +449,7 @@ void setup() {
   Serial.println("--- Delay tung truc (us) ---");
   for (int i = 0; i < NUM_AXES; i++) {
     Serial.print("  "); Serial.print(AXIS_NAMES[i]);
+    if (!axisEnabled[i]) { Serial.println(": [TAT]"); continue; }
     Serial.print(": 1/"); Serial.print(drivers[i]->microsteps());
     Serial.print(" -> homingDelay="); Serial.print(homingDelayUs[i]);
     Serial.print("us, moveDelay="); Serial.print(moveDelayUs[i]);
@@ -275,6 +467,8 @@ void setup() {
   Serial.println("  microstep 32      Dat vi buoc");
   Serial.println("  stealthchop       Che do chay em");
   Serial.println("  spreadcycle       Che do luc lon");
+  Serial.println("CHAN DOAN:");
+  Serial.println("  diag              Kiem tra ket noi UART TMC2208");
   Serial.println("=========================================");
 }
 
@@ -322,17 +516,18 @@ void loop() {
       printAllDriverStatus();
     }
     else if (inputStr.equalsIgnoreCase("stealthchop")) {
-      for (int i = 0; i < NUM_AXES; i++) drivers[i]->en_spreadCycle(false);
-      Serial.println("-> Da bat StealthChop cho ca 3 truc");
+      for (int i = 0; i < NUM_AXES; i++) { if (axisEnabled[i]) drivers[i]->en_spreadCycle(false); }
+      Serial.println("-> Da bat StealthChop cho cac truc dang bat");
     }
     else if (inputStr.equalsIgnoreCase("spreadcycle")) {
-      for (int i = 0; i < NUM_AXES; i++) drivers[i]->en_spreadCycle(true);
-      Serial.println("-> Da bat SpreadCycle cho ca 3 truc");
+      for (int i = 0; i < NUM_AXES; i++) { if (axisEnabled[i]) drivers[i]->en_spreadCycle(true); }
+      Serial.println("-> Da bat SpreadCycle cho cac truc dang bat");
     }
     else if (inputStr.startsWith("current ") || inputStr.startsWith("Current ")) {
       int mA = inputStr.substring(8).toInt();
       if (mA >= 100 && mA <= 2000) {
         for (int i = 0; i < NUM_AXES; i++) {
+          if (!axisEnabled[i]) continue;
           drivers[i]->rms_current(mA);
           drivers[i]->ihold(scaleCurrentToIhold(mA / 2, mA));
         }
@@ -345,7 +540,7 @@ void loop() {
       int ms = inputStr.substring(10).toInt();
       if (ms == 1 || ms == 2 || ms == 4 || ms == 8 || ms == 16 ||
           ms == 32 || ms == 64 || ms == 128 || ms == 256) {
-        for (int i = 0; i < NUM_AXES; i++) drivers[i]->microsteps(ms);
+        for (int i = 0; i < NUM_AXES; i++) { if (axisEnabled[i]) drivers[i]->microsteps(ms); }
         Serial.print("-> Microstep dat lai: 1/"); Serial.println(ms);
         Serial.println("!! LUU Y: Tinh lai STEPS_PER_MM trong code !!");
       } else {
@@ -354,6 +549,9 @@ void loop() {
     }
     else if (inputStr.equalsIgnoreCase("test")) {
       testAllMotors();
+    }
+    else if (inputStr.equalsIgnoreCase("diag")) {
+      runFullDiag();
     }
     else {
       parseAndMove(inputStr);
@@ -367,6 +565,11 @@ void loop() {
 void testAllMotors() {
   Serial.println("\n===== TEST TUNG DONG CO =====");
   for (int i = 0; i < NUM_AXES; i++) {
+    if (!axisEnabled[i]) {
+      Serial.print("Test truc "); Serial.print(AXIS_NAMES[i]);
+      Serial.println(": [BO QUA - truc tam tat]");
+      continue;
+    }
     Serial.print("Test truc ");
     Serial.print(AXIS_NAMES[i]);
     Serial.print(": EN=");
@@ -405,6 +608,10 @@ void homeAllAxes() {
   // In trang thai cong tac hien tai de kiem tra
   Serial.println("Trang thai cong tac truoc homing:");
   for (int i = 0; i < NUM_AXES; i++) {
+    if (!axisEnabled[i]) {
+      Serial.print("  SW_"); Serial.print(AXIS_NAMES[i]); Serial.println(": [BO QUA]");
+      continue;
+    }
     Serial.print("  SW_"); Serial.print(AXIS_NAMES[i]);
     Serial.print(" (pin "); Serial.print(SW_PINS[i]); Serial.print("): ");
     Serial.println(digitalRead(SW_PINS[i]) == LOW ? "!! DANG NHAN (LOW)" : "Nha (HIGH) OK");
@@ -412,12 +619,13 @@ void homeAllAxes() {
   Serial.flush();
 
   for (int i = 0; i < NUM_AXES; i++) {
-    isHomed[i] = false;
+    isHomed[i] = axisEnabled[i] ? false : true; // Truc tat coi nhu da home
   }
 
   // GIAI DOAN 0: Lui ra neu cong tac dang bi nhan
   bool needBackoff = false;
   for (int i = 0; i < NUM_AXES; i++) {
+    if (!axisEnabled[i]) continue;
     if (digitalRead(SW_PINS[i]) == LOW) {
       delay(5); // debounce
       if (digitalRead(SW_PINS[i]) == LOW) {
@@ -436,6 +644,7 @@ void homeAllAxes() {
     delayMicroseconds(20);
     for (int s = 0; s < 2000; s++) { // Lui toi da ~2000 buoc
       for (int i = 0; i < NUM_AXES; i++) {
+        if (!axisEnabled[i]) continue;
         if (digitalRead(SW_PINS[i]) == HIGH) continue; // Da nha
         digitalWrite(STEP_PINS[i], HIGH);
       }
@@ -460,6 +669,7 @@ void homeAllAxes() {
   Serial.flush();
 
   bool triggered[NUM_AXES]  = {false, false, false};
+  for (int i = 0; i < NUM_AXES; i++) { if (!axisEnabled[i]) triggered[i] = true; }
   bool stepHigh[NUM_AXES]   = {false, false, false};
   long stepCount[NUM_AXES]  = {0, 0, 0};
   // Debounce theo thoi gian (5ms) - khong phu thuoc tan so buoc
@@ -518,6 +728,7 @@ void homeAllAxes() {
 
   // Ha tat ca STEP pins truoc giai doan 2
   for (int i = 0; i < NUM_AXES; i++) {
+    if (!axisEnabled[i]) continue;
     if (stepHigh[i]) { digitalWrite(STEP_PINS[i], LOW); stepHigh[i] = false; }
     if (stepCount[i] < maxHomingSteps[i]) digitalWrite(DIR_PINS[i], HIGH);
   }
@@ -528,6 +739,7 @@ void homeAllAxes() {
   Serial.flush();
 
   bool backedOff[NUM_AXES] = {false, false, false};
+  for (int i = 0; i < NUM_AXES; i++) { if (!axisEnabled[i]) backedOff[i] = true; }
   long backCount[NUM_AXES] = {0, 0, 0};
   now = micros();
   for (int i = 0; i < NUM_AXES; i++) nextStep[i] = now;

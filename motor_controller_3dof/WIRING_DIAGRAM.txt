@@ -25,7 +25,7 @@
                     |  PA6(D12)        |----> X_EN
                     |  PA7(D11)        |<---- X_SW (limit switch)
                     |                  |
-                    |  PC10(CN7 pin1)[1kΩ]|---+
+                    |  PB10(D6)  [1kΩ]|----+
                     |  PC11(CN7 pin3)  |--+ |
                     |                  |  +--> PDN_UART driver Y (USART3)
                     |  PB3(D3)         |----> Y_STEP
@@ -51,9 +51,15 @@
 
  * TMC2208 chi co 1 chan PDN_UART, dung giao thuc 1-wire half-duplex
  * TX va RX cua Nucleo PHAI noi cung den 1 chan PDN_UART
+ * QUAN TRONG: PDN_UART = LOW se TAT driver (power down)!
+ *   -> CAN dien tro pull-up 10kOhm len VIO (3.3V)
 
  So do ket noi (ap dung cho tung truc):
 
+                  VIO (3.3V)
+                     |
+                   [10kΩ]  <-- PULL-UP (bat buoc!)
+                     |
     Nucleo TX ----[1kΩ]----+-----> PDN_UART (TMC2208)
                            |
     Nucleo RX -------------+
@@ -79,7 +85,7 @@
   | Truc     | TX               | RX                |
   +----------+------------------+-------------------+
   | X (USART1)| PA9  = D8       | PA10 = D2         |
-  | Y (USART3)| PC10 = CN7 pin 1 | PC11 = CN7 pin 3  |
+  | Y (USART3)| PB10 = D6       | PC11 = CN7 pin 3  |
   | Z (USART6)| PC6  = CN10 pin4| PC7  = D9         |
   +----------+------------------+-------------------+
 
@@ -116,8 +122,8 @@
   | PB5  (D4)           | DIR      | Huong quay          |
   | PB4  (D5)           | EN       | Bat/tat driver      |
   | PB0  (A3)           | -        | Cong tac hanh trinh |
-  | PC10 (CN7 pin1) [1kΩ] | PDN_UART | UART TX cau hinh    |
-  | PC11 (CN7 pin3)        | PDN_UART | UART RX cau hinh    |
+  | PB10 (D6)    [1kΩ]  | PDN_UART | UART TX cau hinh    |
+  | PC11 (CN7 pin3)     | PDN_UART | UART RX cau hinh    |
   +---------------------+----------+---------------------+
 
   TRUC Z (USART6: PC6/PC7):
