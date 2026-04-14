@@ -195,6 +195,28 @@
    * CSN  = Chip Select (Active LOW)
    * DIAG = Co the bo trong (dung cho StallGuard/loi)
 
+   !! QUAN TRONG - THU TU CAM CHAN !!
+   - Cac chan SPI (SDI, SDO, SCK, CSN) PHAI cam DUNG THU TU
+     nhu tren module. KHONG duoc doi cho!
+   - Moi chan mang tin hieu KHAC NHAU hoan toan:
+       SDI nhan du lieu, SDO gui du lieu, SCK la xung dong bo
+   - Cam sai (vd: doi SDI <-> SCK) = khong giao tiep duoc,
+     co the hu driver!
+   - Tuong tu phia Motor: EN, STEP, DIR khong doi cho duoc.
+
+   !! CHE DO GIAO TIEP (SPI / UART / Standalone) !!
+   - TMC2240 doc trang thai chan cau hinh luc BAT NGUON de
+     chon che do giao tiep. Sau khi bat nguon, khong doi duoc.
+   - Module MKS TMC2240 V1.0 thuong co solder pad/jumper
+     tren board de chon che do:
+       SPI_MODE pin = HIGH  -> che do SPI (dang dung)
+       SPI_MODE pin = LOW   -> che do single-wire UART
+   - Kiem tra board: tim cac pad danh dau "SPI" hoac "UART"
+     gan IC TMC2240. Dam bao da han/noi dung cho SPI.
+   - Neu VERSION doc duoc = 0x40 qua SPI -> mode da dung.
+   - Neu VERSION = 0x00 hoac 0xFF -> kiem tra lai jumper mode,
+     day SPI, va nguon VCC_IO.
+
 =========================================================
  8. BANG TOM TAT CHAN KET NOI
 =========================================================
