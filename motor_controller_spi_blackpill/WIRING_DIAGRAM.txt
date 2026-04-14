@@ -23,7 +23,7 @@
    (115200 baud)    |                  |
                     |                  |
    === SPI1 BUS (CHUNG CHO 3 DRIVER) ===
-                    |  PA5  (SCK)      |-----> SCK (ca 3 driver)
+                    |  PA5  (SCK00.)      |-----> SCK (ca 3 driver)
                     |  PA6  (MISO)     |<----- SDO (ca 3 driver)
                     |  PA7  (MOSI)     |-----> SDI (ca 3 driver)
                     |                  |

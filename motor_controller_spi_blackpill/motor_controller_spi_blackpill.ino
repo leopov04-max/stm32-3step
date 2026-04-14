@@ -113,7 +113,8 @@ long currentPositionSteps[NUM_AXES] = {0, 0, 0};
 bool isHomed[NUM_AXES] = {false, false, false};
 
 // TAM VO HIEU HOA TRUC - dat false de bo qua truc do
-bool axisEnabled[NUM_AXES] = {true, true, true};
+// Tam tat Z (da go driver Z ra)
+bool axisEnabled[NUM_AXES] = {true, true, false};
 
 // Thong so homing (se tinh lai tu microstep thuc te)
 long maxHomingSteps[NUM_AXES] = {50000, 50000, 50000};
@@ -332,7 +333,7 @@ bool tmcTestConnection(int axis) {
 // ==========================================
 
 void spiReset() {
-  Serial.println("SPI reset: end -> GPIO warmup -> begin...");
+  Serial.println("SPI reset: end -> bit-bang warmup -> begin...");
   
   // Tat SPI hardware
   SPI.end();
@@ -346,14 +347,16 @@ void spiReset() {
   // Mode 3 idle: SCK = HIGH, MOSI = LOW
   digitalWrite(PA5, HIGH);
   digitalWrite(PA7, LOW);
-  delay(1);
+  delay(10);
   
-  // Toggle SCK voi CS LOW de reset TMC2240 SPI state machine
+  // Gui bit-bang frame THUC SU cho tung driver (doc IOIN = 0x04)
+  // Day la cach duy nhat dam bao TMC2240 SPI state machine reset
   for (int c = 0; c < NUM_AXES; c++) {
     if (!axisEnabled[c]) continue;
+    
+    // Frame 1: flush - gui 48 clock voi CS LOW
     digitalWrite(CS_PINS[c], LOW);
     delayMicroseconds(100);
-    // Gui 48 clock cycles (> 40 bit = 1 frame) de flush
     for (int i = 0; i < 48; i++) {
       digitalWrite(PA5, LOW);
       delayMicroseconds(5);
@@ -363,11 +366,81 @@ void spiReset() {
     delayMicroseconds(100);
     digitalWrite(CS_PINS[c], HIGH);
     delayMicroseconds(200);
+    
+    // Frame 2: Gui lenh doc IOIN (0x04) + 4 byte dummy = 40 bit
+    // Giong het cach diag lam - da chung minh hoat dong
+    uint8_t txByte = 0x04;
+    digitalWrite(CS_PINS[c], LOW);
+    delayMicroseconds(100);
+    // Byte 0: address
+    for (int bit = 7; bit >= 0; bit--) {
+      digitalWrite(PA7, (txByte >> bit) & 1);
+      delayMicroseconds(5);
+      digitalWrite(PA5, LOW);   // falling edge (Mode 3)
+      delayMicroseconds(5);
+      digitalWrite(PA5, HIGH);  // rising edge
+      delayMicroseconds(5);
+    }
+    // Bytes 1-4: dummy
+    for (int byteIdx = 0; byteIdx < 4; byteIdx++) {
+      for (int bit = 7; bit >= 0; bit--) {
+        digitalWrite(PA7, LOW);
+        delayMicroseconds(5);
+        digitalWrite(PA5, LOW);
+        delayMicroseconds(5);
+        digitalWrite(PA5, HIGH);
+        delayMicroseconds(5);
+      }
+    }
+    delayMicroseconds(100);
+    digitalWrite(CS_PINS[c], HIGH);
+    delayMicroseconds(200);
+    
+    // Frame 3: Gui lai de doc response (TMC2240 pipeline)
+    txByte = 0x04;
+    uint8_t rxStatus = 0;
+    uint8_t rxData[4] = {0,0,0,0};
+    digitalWrite(CS_PINS[c], LOW);
+    delayMicroseconds(100);
+    for (int bit = 7; bit >= 0; bit--) {
+      digitalWrite(PA7, (txByte >> bit) & 1);
+      delayMicroseconds(5);
+      digitalWrite(PA5, LOW);
+      delayMicroseconds(5);
+      rxStatus |= (digitalRead(PA6) << bit);
+      digitalWrite(PA5, HIGH);
+      delayMicroseconds(5);
+    }
+    for (int byteIdx = 0; byteIdx < 4; byteIdx++) {
+      for (int bit = 7; bit >= 0; bit--) {
+        digitalWrite(PA7, LOW);
+        delayMicroseconds(5);
+        digitalWrite(PA5, LOW);
+        delayMicroseconds(5);
+        rxData[byteIdx] |= (digitalRead(PA6) << bit);
+        digitalWrite(PA5, HIGH);
+        delayMicroseconds(5);
+      }
+    }
+    delayMicroseconds(100);
+    digitalWrite(CS_PINS[c], HIGH);
+    delayMicroseconds(200);
+    
+    uint8_t ver = rxData[0] >> 4 | (rxData[0] & 0x0F);
+    // In ket qua bit-bang
+    Serial.print("  BB "); Serial.print(AXIS_NAMES[c]);
+    Serial.print(": status=0x"); Serial.print(rxStatus, HEX);
+    Serial.print(" ver_byte=0x"); Serial.print(rxData[0], HEX);
+    Serial.println(rxData[0] == 0x40 ? " [OK]" : "");
   }
+  
+  // SCK ve HIGH (idle Mode 3)
+  digitalWrite(PA5, HIGH);
+  delay(10);
   
   // Khoi dong lai SPI hardware
   SPI.begin();
-  delay(50);
+  delay(100);
   
   // Khoi tao lai CS pins (SPI.begin co the chiem PA4 NSS)
   for (int c = 0; c < NUM_AXES; c++) {
@@ -634,79 +707,158 @@ void setup() {
     pinMode(SW_PINS[i], INPUT_PULLUP);
   }
 
-  // Khoi tao SPI1 TRUOC - de tranh xung dot voi PA4 (SPI1_NSS)
-  SPI.begin();
-  delay(100);
+  // ========== BIT-BANG WARMUP TRUOC KHI BAT SPI ==========
+  // QUAN TRONG: Phai lam TRUOC SPI.begin() vi SPI.begin() chiem PA4 (NSS)
+  // tao glitch CS LOW -> pha SPI state machine cua TMC2240
+  Serial.println("Cho driver khoi dong (1000ms)...");
+  delay(1000);
 
-  // Cau hinh CS pins SAU SPI.begin()
-  // QUAN TRONG: SPI.begin() co the chiem PA4 (NSS), nen phai
-  // khoi tao lai CS pins sau do
+  // Cau hinh CS pins + SPI pins bang GPIO TRUOC
   for (int i = 0; i < NUM_AXES; i++) {
+    pinMode(CS_PINS[i], OUTPUT);
+    digitalWrite(CS_PINS[i], HIGH);
+  }
+  pinMode(PA5, OUTPUT);   // SCK
+  pinMode(PA7, OUTPUT);   // MOSI
+  pinMode(PA6, INPUT);    // MISO
+  digitalWrite(PA5, HIGH); // Mode 3 idle
+  digitalWrite(PA7, LOW);
+  delay(10);
+
+  // Bit-bang warmup: gui frame SPI thuc te cho tung driver
+  Serial.println("Bit-bang warmup (truoc SPI.begin)...");
+  for (int c = 0; c < NUM_AXES; c++) {
+    if (!axisEnabled[c]) continue;
+    
+    // Flush: 48 clock cycles
+    digitalWrite(CS_PINS[c], LOW);
+    delayMicroseconds(100);
+    for (int i = 0; i < 48; i++) {
+      digitalWrite(PA5, LOW);
+      delayMicroseconds(5);
+      digitalWrite(PA5, HIGH);
+      delayMicroseconds(5);
+    }
+    delayMicroseconds(100);
+    digitalWrite(CS_PINS[c], HIGH);
+    delayMicroseconds(200);
+    
+    // Frame 1: Doc IOIN (0x04)
+    uint8_t txByte = 0x04;
+    digitalWrite(CS_PINS[c], LOW);
+    delayMicroseconds(100);
+    for (int bit = 7; bit >= 0; bit--) {
+      digitalWrite(PA7, (txByte >> bit) & 1);
+      delayMicroseconds(5);
+      digitalWrite(PA5, LOW);
+      delayMicroseconds(5);
+      digitalWrite(PA5, HIGH);
+      delayMicroseconds(5);
+    }
+    for (int byteIdx = 0; byteIdx < 4; byteIdx++) {
+      for (int bit = 7; bit >= 0; bit--) {
+        digitalWrite(PA7, LOW);
+        delayMicroseconds(5);
+        digitalWrite(PA5, LOW);
+        delayMicroseconds(5);
+        digitalWrite(PA5, HIGH);
+        delayMicroseconds(5);
+      }
+    }
+    delayMicroseconds(100);
+    digitalWrite(CS_PINS[c], HIGH);
+    delayMicroseconds(200);
+    
+    // Frame 2: Doc response (pipeline)
+    uint8_t rxStatus = 0;
+    uint8_t rxData0 = 0;
+    txByte = 0x04;
+    digitalWrite(CS_PINS[c], LOW);
+    delayMicroseconds(100);
+    for (int bit = 7; bit >= 0; bit--) {
+      digitalWrite(PA7, (txByte >> bit) & 1);
+      delayMicroseconds(5);
+      digitalWrite(PA5, LOW);
+      delayMicroseconds(5);
+      rxStatus |= (digitalRead(PA6) << bit);
+      digitalWrite(PA5, HIGH);
+      delayMicroseconds(5);
+    }
+    for (int bit = 7; bit >= 0; bit--) {
+      digitalWrite(PA7, LOW);
+      delayMicroseconds(5);
+      digitalWrite(PA5, LOW);
+      delayMicroseconds(5);
+      rxData0 |= (digitalRead(PA6) << bit);
+      digitalWrite(PA5, HIGH);
+      delayMicroseconds(5);
+    }
+    // 3 dummy bytes
+    for (int byteIdx = 0; byteIdx < 3; byteIdx++) {
+      for (int bit = 7; bit >= 0; bit--) {
+        digitalWrite(PA7, LOW);
+        delayMicroseconds(5);
+        digitalWrite(PA5, LOW);
+        delayMicroseconds(5);
+        digitalWrite(PA5, HIGH);
+        delayMicroseconds(5);
+      }
+    }
+    delayMicroseconds(100);
+    digitalWrite(CS_PINS[c], HIGH);
+    delayMicroseconds(200);
+    
+    Serial.print("  "); Serial.print(AXIS_NAMES[c]);
+    Serial.print(": status=0x"); Serial.print(rxStatus, HEX);
+    Serial.print(" ver=0x"); Serial.print(rxData0, HEX);
+    Serial.println(rxData0 == 0x40 ? " [OK]" : "");
+  }
+  
+  // SCK = HIGH truoc khi SPI.begin()
+  digitalWrite(PA5, HIGH);
+  // Dam bao tat ca CS = HIGH truoc SPI.begin()
+  for (int i = 0; i < NUM_AXES; i++) {
+    digitalWrite(CS_PINS[i], HIGH);
+  }
+  delay(10);
+
+  // ========== BAT SPI HARDWARE (CHI 1 LAN DUY NHAT) ==========
+  SPI.begin();
+  delay(50);
+
+  // NGAY LAP TUC chiem lai PA4 tu SPI NSS
+  pinMode(CS_PINS[0], OUTPUT);  // PA4 = CS_X
+  digitalWrite(CS_PINS[0], HIGH);
+  // Cac CS khac cung phai re-init
+  for (int i = 1; i < NUM_AXES; i++) {
     pinMode(CS_PINS[i], OUTPUT);
     digitalWrite(CS_PINS[i], HIGH);
   }
   delay(10);
 
-  // In trang thai chan de debug
+  // In trang thai chan
   Serial.println("--- Kiem tra chan SPI ---");
-  Serial.print("  SCK  (PA5) : "); Serial.println(digitalRead(PA5));
-  Serial.print("  MISO (PA6) : "); Serial.println(digitalRead(PA6));
-  Serial.print("  MOSI (PA7) : "); Serial.println(digitalRead(PA7));
+  Serial.print("  SCK="); Serial.print(digitalRead(PA5));
+  Serial.print(" MISO="); Serial.print(digitalRead(PA6));
+  Serial.print(" MOSI="); Serial.println(digitalRead(PA7));
   for (int i = 0; i < NUM_AXES; i++) {
     Serial.print("  CS_"); Serial.print(AXIS_NAMES[i]);
-    Serial.print("  (pin "); Serial.print(CS_PINS[i]);
-    Serial.print(") : "); Serial.println(digitalRead(CS_PINS[i]));
-  }
-  for (int i = 0; i < NUM_AXES; i++) {
-    Serial.print("  EN_"); Serial.print(AXIS_NAMES[i]);
-    Serial.print("  (pin "); Serial.print(EN_PINS[i]);
-    Serial.print(") : "); Serial.print(digitalRead(EN_PINS[i]));
-    Serial.println(digitalRead(EN_PINS[i]) == LOW ? " [BAT]" : " [TAT]");
+    Serial.print("="); Serial.print(digitalRead(CS_PINS[i]));
+    Serial.print(" EN_"); Serial.print(AXIS_NAMES[i]);
+    Serial.print("="); Serial.println(digitalRead(EN_PINS[i]));
   }
 
-  // ========== THU SPI RAW TRUOC KHI INIT DRIVER ==========
-  Serial.println("Thu SPI raw (doc IOIN = reg 0x04)...");
+  // ========== KIEM TRA KET NOI ==========
+  Serial.println("Kiem tra SPI hardware...");
   for (int i = 0; i < NUM_AXES; i++) {
     if (!axisEnabled[i]) continue;
-    // Thu SPI transfer raw
-    SPI.beginTransaction(tmcSpiSettings);
-    digitalWrite(CS_PINS[i], LOW);
-    delayMicroseconds(10);
-    uint8_t b0 = SPI.transfer(0x04);  // Read IOIN
-    uint8_t b1 = SPI.transfer(0x00);
-    uint8_t b2 = SPI.transfer(0x00);
-    uint8_t b3 = SPI.transfer(0x00);
-    uint8_t b4 = SPI.transfer(0x00);
-    delayMicroseconds(10);
-    digitalWrite(CS_PINS[i], HIGH);
-    SPI.endTransaction();
-    Serial.print("  "); Serial.print(AXIS_NAMES[i]);
-    Serial.print(": status=0x"); Serial.print(b0, HEX);
-    Serial.print(" data=0x"); Serial.print(b1, HEX);
-    Serial.print(" "); Serial.print(b2, HEX);
-    Serial.print(" "); Serial.print(b3, HEX);
-    Serial.print(" "); Serial.println(b4, HEX);
-    if (b0 == 0xFF && b1 == 0xFF) {
-      Serial.println("    -> TAT CA 0xFF: MISO bi keo HIGH hoac driver chua cap dien!");
-      Serial.println("    -> Kiem tra: VCC_IO co 3.3V? VM co 12-24V? Day SDO noi dung?");
-    } else if (b0 == 0x00 && b1 == 0x00) {
-      Serial.println("    -> TAT CA 0x00: MISO bi keo LOW hoac CS khong hoat dong");
-    }
+    tmcSync(i);
     delay(10);
-  }
-
-  // ========== SPI RESET TRUOC KHI INIT ==========
-  spiReset();
-
-  // Kiem tra SPI sau reset
-  Serial.println("Kiem tra SPI sau reset...");
-  for (int i = 0; i < NUM_AXES; i++) {
-    if (!axisEnabled[i]) continue;
     uint32_t ioin = tmcRead(i, TMC_IOIN);
     uint8_t ver = (ioin >> 24) & 0xFF;
     Serial.print("  "); Serial.print(AXIS_NAMES[i]);
     Serial.print(": VERSION=0x"); Serial.print(ver, HEX);
-    Serial.println(ver == 0x40 ? " [OK]" : " [CHUA KET NOI]");
+    Serial.println(ver == 0x40 ? " [OK]" : " [LOI]");
   }
 
   // ========== KHOI TAO DRIVER TMC2240 QUA SPI ==========
@@ -721,12 +873,15 @@ void setup() {
     }
 
     tmcInit(i);
+    delay(50);
 
-    // Retry: neu SPI khong phan hoi, reset va init lai 1 lan
+    // Retry rieng tung driver (khong reset bus)
     if (!tmcTestConnection(i)) {
-      Serial.println("  -> SPI that bai! Thu reset va init lai...");
-      spiReset();
+      Serial.println("  -> Thu init lai lan 2...");
+      tmcSync(i);
+      delay(100);
       tmcInit(i);
+      delay(50);
     }
 
     printDriverInfo(i);
@@ -782,23 +937,9 @@ void setup() {
   digitalWrite(LED_PIN, LOW);
 
   Serial.println("-----------------------------------------");
-  Serial.println("CAC LENH DI CHUYEN:");
-  Serial.println("  home              Homing 3 truc");
-  Serial.println("  homeX/homeY/homeZ Homing rieng 1 truc");
-  Serial.println("  X50.5 Y30 Z10     Di chuyen toa do");
-  Serial.println("CAC LENH DRIVER:");
-  Serial.println("  status            Trang thai ca 3 driver");
-  Serial.println("  current 800       Dat dong chay (mA)");
-  Serial.println("  microstep 32      Dat vi buoc");
-  Serial.println("  stealthchop       Che do chay em");
-  Serial.println("  spreadcycle       Che do luc lon");
-  Serial.println("CHAN DOAN:");
-  Serial.println("  diag              Kiem tra ket noi SPI");
-  Serial.println("  test              Quay thu tung dong co");
-  Serial.println("  sw                Doc cong tac hanh trinh");
-  Serial.println("  reg 6C            Doc thanh ghi (hex)");
-  Serial.println("  reinit            Khoi tao lai driver");
-  Serial.println("  loopback          Test loopback SPI");
+  Serial.println("LENH: home homeX/Y/Z X50 Y30 Z10");
+  Serial.println("  status current microstep stealthchop spreadcycle");
+  Serial.println("  diag test sw reg reinit loopback");
   Serial.println("=========================================");
 }
 
@@ -914,11 +1055,17 @@ void loop() {
       runLoopbackTest();
     }
     else if (inputStr.equalsIgnoreCase("reinit")) {
-      Serial.println("\n--- REINIT DRIVER ---");
-      spiReset();
+      Serial.println("\n--- REINIT DRIVER (khong reset SPI) ---");
+      // KHONG goi spiReset() vi SPI.end/begin se pha PA4 (CS_X)
+      // Chi dung tmcSync de dong bo lai
       for (int i = 0; i < NUM_AXES; i++) {
         if (!axisEnabled[i]) continue;
+        tmcSync(i);
+        delay(50);
+        tmcSync(i);
+        delay(50);
         tmcInit(i);
+        delay(50);
         printDriverInfo(i);
       }
       Serial.println("--- Bat driver (EN=LOW) ---");
@@ -938,32 +1085,83 @@ void loop() {
 }
 
 // ==========================================
-// TEST TUNG DONG CO (200 buoc moi truc)
+// TEST TUNG DONG CO (3200 buoc = 1 vong voi 1/16 microstep)
 // ==========================================
 void testAllMotors() {
   Serial.println("\n===== TEST TUNG DONG CO =====");
+
+  // Kiem tra VACTUAL = 0 (che do STEP/DIR ngoai)
+  for (int i = 0; i < NUM_AXES; i++) {
+    if (!axisEnabled[i]) continue;
+    uint32_t vact = tmcRead(i, 0x22);  // VACTUAL register
+    Serial.print("  "); Serial.print(AXIS_NAMES[i]);
+    Serial.print(": VACTUAL="); Serial.print(vact);
+    Serial.println(vact == 0 ? " [OK-STEP/DIR]" : " [LOI-internal motion!]");
+  }
+
   for (int i = 0; i < NUM_AXES; i++) {
     if (!axisEnabled[i]) {
       Serial.print("Test truc "); Serial.print(AXIS_NAMES[i]);
       Serial.println(": [BO QUA - truc tam tat]");
       continue;
     }
-    Serial.print("Test truc ");
-    Serial.print(AXIS_NAMES[i]);
-    Serial.print(": EN=");
-    digitalWrite(EN_PINS[i], LOW);
-    Serial.print(digitalRead(EN_PINS[i]));
-    Serial.println(" -> 200 buoc...");
-    Serial.flush();
 
-    digitalWrite(DIR_PINS[i], HIGH);
-    for (int s = 0; s < 200; s++) {
-      digitalWrite(STEP_PINS[i], HIGH);
-      delayMicroseconds(800);
-      digitalWrite(STEP_PINS[i], LOW);
-      delayMicroseconds(800);
+    // Kiem tra chan STEP co toi driver khong (doc IOIN bit 0)
+    Serial.print("\nTest truc "); Serial.print(AXIS_NAMES[i]); Serial.println(":");
+    digitalWrite(EN_PINS[i], LOW);
+    Serial.print("  EN="); Serial.print(digitalRead(EN_PINS[i]));
+
+    // Doc IOIN voi STEP=LOW
+    digitalWrite(STEP_PINS[i], LOW);
+    delayMicroseconds(100);
+    uint32_t ioin_lo = tmcRead(i, TMC_IOIN);
+    uint8_t step_lo = ioin_lo & 1;
+
+    // Doc IOIN voi STEP=HIGH
+    digitalWrite(STEP_PINS[i], HIGH);
+    delayMicroseconds(100);
+    uint32_t ioin_hi = tmcRead(i, TMC_IOIN);
+    uint8_t step_hi = ioin_hi & 1;
+    digitalWrite(STEP_PINS[i], LOW);
+
+    Serial.print(" STEP_pin: LOW="); Serial.print(step_lo);
+    Serial.print(" HIGH="); Serial.print(step_hi);
+    if (step_lo == 0 && step_hi == 1) {
+      Serial.println(" [OK-day noi dung]");
+    } else {
+      Serial.println(" [LOI-STEP khong toi driver! Kiem tra day]");
     }
-    Serial.println("  -> Xong. Dong co co quay khong?");
+
+    // Doc DRV_STATUS truoc khi step
+    uint32_t ds_before = tmcGetDrvStatus(i);
+    Serial.print("  DRV_STATUS truoc: 0x");
+    for (int b = 28; b >= 0; b -= 4) Serial.print((ds_before >> b) & 0x0F, HEX);
+    Serial.println();
+
+    // 3200 buoc = 1 vong day du voi 1/16 microstep (200*16=3200)
+    Serial.print("  Dang chay 3200 buoc (1 vong)...");
+    Serial.flush();
+    digitalWrite(DIR_PINS[i], HIGH);
+    for (int s = 0; s < 3200; s++) {
+      digitalWrite(STEP_PINS[i], HIGH);
+      delayMicroseconds(400);
+      digitalWrite(STEP_PINS[i], LOW);
+      delayMicroseconds(400);
+    }
+    Serial.println(" Xong!");
+
+    // Doc TSTEP sau khi step (gia tri cuoi cung TMC2240 do duoc)
+    uint32_t tstep = tmcRead(i, TMC_TSTEP);
+    Serial.print("  TSTEP="); Serial.print(tstep);
+    Serial.println(tstep < 0xFFFFF ? " [TMC nhan duoc xung STEP]" : " [0xFFFFF = khong co xung!]");
+
+    // Doc DRV_STATUS sau khi step
+    uint32_t ds_after = tmcGetDrvStatus(i);
+    Serial.print("  DRV_STATUS sau: 0x");
+    for (int b = 28; b >= 0; b -= 4) Serial.print((ds_after >> b) & 0x0F, HEX);
+    Serial.println();
+
+    Serial.println("  -> Dong co co quay 1 vong khong?");
     delay(500);
   }
   Serial.println("===== KET THUC TEST =====");
@@ -1469,6 +1667,7 @@ void runLoopbackTest() {
     digitalWrite(CS_PINS[i], HIGH);
   }
   delay(10);
+  Serial.println("\n!! LUU Y: SPI da reset. Go 'reinit' de cau hinh lai driver.");
   Serial.println("\n===== KET THUC LOOPBACK =====\n");
 }
 
@@ -1690,21 +1889,22 @@ void runFullDiag() {
   }
   delay(10);
 
+  // Tu dong reinit driver sau khi SPI.begin() (fix PA4 glitch)
+  Serial.println("\nTu dong reinit driver sau diag...");
+  for (int i = 0; i < NUM_AXES; i++) {
+    if (!axisEnabled[i]) continue;
+    tmcSync(i);
+    delay(20);
+    tmcInit(i);
+    delay(20);
+    printDriverInfo(i);
+  }
+  for (int i = 0; i < NUM_AXES; i++) {
+    if (axisEnabled[i]) { digitalWrite(EN_PINS[i], LOW); delay(10); }
+  }
+
   Serial.println("\n===== KET LUAN =====");
-  Serial.println("- VERSION=0x40: TMC2240 ket noi thanh cong");
-  Serial.println("- VERSION=0x00/0xFF: Kiem tra day SPI, CS, VCC_IO, VM");
-  Serial.println("- Neu bit-bang cung 0x00: loi phan cung (day, nguon)");
-  Serial.println("- Neu bit-bang co du lieu: loi SPI hardware config");
-  Serial.println("- drv_err=1: Loi driver (qua nhiet, ngan mach...)");
-  Serial.println("- uv_cp=1: Charge pump thap (kiem tra nguon VM)");
-  Serial.println("");
-  Serial.println("KIEM TRA PHAN CUNG:");
-  Serial.println("  1. VM (12-24V) da cap cho driver chua?");
-  Serial.println("  2. VCC_IO noi 3.3V chua?");
-  Serial.println("  3. MKS TMC2240: co jumper/solder pad chon SPI?");
-  Serial.println("     (Nhieu module MKS mac dinh UART, can han chon SPI)");
-  Serial.println("  4. Day SDO(MISO) noi dung chan PA6?");
-  Serial.println("  5. Day SDI(MOSI) noi dung chan PA7?");
-  Serial.println("  6. Day SCK noi dung chan PA5?");
+  Serial.println("0x40=OK, 0x00/0xFF=Kiem tra SPI/CS/VCC_IO/VM");
+  Serial.println("drv_err=loi driver, uv_cp=charge pump thap");
   Serial.println("===================================\n");
 }
