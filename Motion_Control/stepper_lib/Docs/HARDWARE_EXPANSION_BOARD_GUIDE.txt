@@ -1,0 +1,955 @@
+╔═══════════════════════════════════════════════════════════════════════════════╗
+║  HƯỚNG DẪN THIẾT KẾ MẠCH MỞ RỘNG (EXPANSION BOARD)                        ║
+║  CHO DỰ ÁN ĐIỀU KHIỂN 3 TRỤC STEPPER MOTOR                                ║
+║  MCU: STM32F411CEU6 (WeAct BlackPill V3.1)                                 ║
+║  Driver: TMC2240 (SPI interface)                                            ║
+║  Ngày tạo: 15/04/2026                                                       ║
+╚═══════════════════════════════════════════════════════════════════════════════╝
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+ MỤC LỤC
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+  PHẦN A: TỔNG QUAN DỰ ÁN
+    A1. Mô tả hệ thống
+    A2. Sơ đồ khối tổng thể
+
+  PHẦN B: KẾT QUẢ KIỂM TRA FIRMWARE - LỖI VÀ LƯU Ý
+    B1. Lỗi trong tài liệu (CUBEMX_SETUP_GUIDE.txt)
+    B2. Cảnh báo về cấu hình (Config Warnings)
+    B3. Khuyến nghị cải thiện
+
+  PHẦN C: BẢNG PHÂN BỔ CHÂN MCU ĐẦY ĐỦ
+    C1. Bảng chân đã sử dụng (chi tiết)
+    C2. Bảng chân còn trống (dự phòng mở rộng)
+    C3. Chân hệ thống (không được sử dụng cho mạch mở rộng)
+
+  PHẦN D: THIẾT KẾ MẠCH MỞ RỘNG - CHI TIẾT PHẦN CỨNG
+    D1. Giao tiếp SPI với TMC2240 (3 driver)
+    D2. Mạch điều khiển STEP / DIR / EN
+    D3. Mạch công tắc hành trình (Limit Switch)
+    D4. Giao tiếp UART (Python + Debug)
+    D5. Header kết nối với BlackPill
+    D6. Nguồn cấp và bảo vệ
+
+  PHẦN E: SƠ ĐỒ NGUYÊN LÝ GỢI Ý
+    E1. Sơ đồ kết nối tổng thể
+    E2. Mạch nguồn
+    E3. Mạch SPI + CS
+    E4. Mạch STEP/DIR/EN mỗi trục
+    E5. Mạch Limit Switch mỗi trục
+    E6. Mạch UART
+
+  PHẦN F: GHI CHÚ CHO NGƯỜI VẼ MẠCH (PCB LAYOUT)
+    F1. Quy tắc đi dây SPI
+    F2. Quy tắc nguồn
+    F3. Tụ lọc (Decoupling)
+    F4. Kích thước và lớp PCB
+
+  PHẦN G: DANH SÁCH LINH KIỆN (BOM) GỢI Ý
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+═══════════════════════════════════════════════════════════════════════════════
+ PHẦN A: TỔNG QUAN DỰ ÁN
+═══════════════════════════════════════════════════════════════════════════════
+
+───────────────────────────────────────────────────────────────────────────────
+ A1. MÔ TẢ HỆ THỐNG
+───────────────────────────────────────────────────────────────────────────────
+
+  Hệ thống điều khiển chuyển động 3 trục (X, Y, Z) sử dụng:
+    - MCU: STM32F411CEU6 trên board WeAct BlackPill V3.1
+    - Driver stepper: TMC2240 (3 con, giao tiếp SPI chung bus)
+    - Công tắc hành trình: 3 cái (Normally Open), 1 cho mỗi trục
+    - Giao tiếp: UART tới PC (Python) + UART debug
+
+  Mạch mở rộng (expansion board) cần thiết kế:
+    - Nhận module BlackPill cắm vào qua header đực/cái
+    - Kết nối ra 3 driver TMC2240 (qua connector hoặc header)
+    - Kết nối 3 công tắc hành trình
+    - Cấp nguồn logic 3.3V (từ BlackPill) và nguồn motor 12-48V
+    - Header UART ra ngoài (cho Python và Debug)
+
+───────────────────────────────────────────────────────────────────────────────
+ A2. SƠ ĐỒ KHỐI TỔNG THỂ
+───────────────────────────────────────────────────────────────────────────────
+
+  ┌─────────────────────────────────────────────────────────────────────────┐
+  │                        EXPANSION BOARD                                 │
+  │                                                                        │
+  │  ┌──────────────┐   SPI Bus    ┌───────────┐                          │
+  │  │              │──SCK/MOSI───>│ TMC2240 X │──> Motor X               │
+  │  │              │<──MISO──────│           │                           │
+  │  │              │──CS_X──────>│           │                           │
+  │  │              │              └───────────┘                          │
+  │  │              │                                                      │
+  │  │  BlackPill   │   SPI Bus    ┌───────────┐                          │
+  │  │ STM32F411CE  │──SCK/MOSI───>│ TMC2240 Y │──> Motor Y               │
+  │  │              │<──MISO──────│           │                           │
+  │  │              │──CS_Y──────>│           │                           │
+  │  │              │              └───────────┘                          │
+  │  │              │                                                      │
+  │  │              │   SPI Bus    ┌───────────┐                          │
+  │  │              │──SCK/MOSI───>│ TMC2240 Z │──> Motor Z               │
+  │  │              │<──MISO──────│           │                           │
+  │  │              │──CS_Z──────>│           │                           │
+  │  │              │              └───────────┘                          │
+  │  │              │                                                      │
+  │  │              │──STEP/DIR/EN──> (đấu tới từng driver)               │
+  │  │              │                                                      │
+  │  │              │<──LIMIT_X────── Công tắc X ──> GND                  │
+  │  │              │<──LIMIT_Y────── Công tắc Y ──> GND                  │
+  │  │              │<──LIMIT_Z────── Công tắc Z ──> GND                  │
+  │  │              │                                                      │
+  │  │              │──UART2_TX/RX──> Header UART (Python)                │
+  │  │              │──UART1_TX/RX──> Header UART (Debug)                 │
+  │  └──────────────┘                                                      │
+  │                                                                        │
+  │  ┌────────────┐      ┌────────────┐                                   │
+  │  │ Nguồn 3.3V │      │ Nguồn Motor│                                   │
+  │  │ (từ BP)    │      │ 12-48V DC  │                                   │
+  │  └────────────┘      └────────────┘                                   │
+  └─────────────────────────────────────────────────────────────────────────┘
+
+
+═══════════════════════════════════════════════════════════════════════════════
+ PHẦN B: KẾT QUẢ KIỂM TRA FIRMWARE - LỖI VÀ LƯU Ý
+═══════════════════════════════════════════════════════════════════════════════
+
+  Đã kiểm tra toàn bộ các file:
+    - stepper_lib.ioc (cấu hình CubeMX)
+    - Core/Src/main.c, gpio.c, spi.c, usart.c, tim.c, dma.c
+    - Core/Src/stm32f4xx_it.c, stm32f4xx_hal_msp.c
+    - Core/Inc/*.h (tất cả header)
+    - Docs/CUBEMX_SETUP_GUIDE.txt
+
+───────────────────────────────────────────────────────────────────────────────
+ B1. KIỂM TRA TÀI LIỆU (CUBEMX_SETUP_GUIDE.txt) - ĐÃ ĐÚNG
+───────────────────────────────────────────────────────────────────────────────
+
+  Tất cả các mục trong CUBEMX_SETUP_GUIDE.txt đã được kiểm tra và
+  xác nhận nhất quán:
+
+  ✓ Mục 10 (Timer): TIM2 = Trục Z (32-bit, phân giải cao)
+                      TIM3 = Trục Y (16-bit)
+                      TIM4 = Trục X (16-bit)
+
+  ✓ Mục 11 (NVIC):  TIM2 (Z step), TIM3 (Y step), TIM4 (X step)
+                      → Khớp với mục 10.
+
+  ✓ Mục 6b + 15(e): USART1 (PA9/PA10) đã cấu hình cho Debug Log
+                      (printf redirect), 115200 baud, interrupt mode.
+
+  ✓ Không có xung đột chân (pin conflict).
+  ✓ Tất cả nhãn timer, UART, GPIO nhất quán giữa các mục.
+
+───────────────────────────────────────────────────────────────────────────────
+ B2. CẢNH BÁO VỀ CẤU HÌNH (Config Warnings)
+───────────────────────────────────────────────────────────────────────────────
+
+  [CẢNH BÁO 1] HEAP VÀ STACK SIZE QUÁ NHỎ
+  ──────────────────────────────────────────
+    Hiện tại trong .ioc:
+      HeapSize  = 0x200 (512 bytes)
+      StackSize = 0x400 (1024 bytes)
+
+    Nếu dùng printf() qua USART1 (như đề xuất trong hướng dẫn),
+    printf/sprintf cần khoảng 512-1024 bytes stack cho formatting.
+    Với stack chỉ 1KB, có nguy cơ STACK OVERFLOW khi gọi printf()
+    trong interrupt hoặc hàm lồng sâu.
+
+    → KHUYẾN NGHỊ: Tăng lên ít nhất:
+      HeapSize  = 0x400 (1024 bytes)
+      StackSize = 0x800 (2048 bytes)
+    Sửa trong file STM32F411CEUX_FLASH.ld hoặc trong .ioc > Project Manager.
+
+  [CẢNH BÁO 2] KHÔNG CÓ WATCHDOG (IWDG/WWDG)
+  ─────────────────────────────────────────────
+    Dự án điều khiển motor nhưng không cấu hình watchdog timer.
+    Nếu firmware bị treo (ví dụ: lỗi HardFault không xử lý được),
+    motor có thể tiếp tục chạy không kiểm soát.
+
+    → KHUYẾN NGHỊ: Bật IWDG (Independent Watchdog) với timeout ~500ms.
+    Trong main loop, gọi HAL_IWDG_Refresh() định kỳ.
+    Khi firmware treo → watchdog reset MCU → EN=HIGH → driver tắt → an toàn.
+
+  [CẢNH BÁO 3] TIM2/TIM3/TIM4 INTERRUPT PRIORITY ĐỀU = 0 (CAO NHẤT)
+  ─────────────────────────────────────────────────────────────────────
+    Cả 3 timer đều ở priority 0, nghĩa là không timer nào có thể
+    preempt (chen ngang) timer khác. Nếu ISR của 1 timer chạy lâu,
+    các timer còn lại sẽ bị trễ.
+
+    Thực tế: ISR chỉ toggle GPIO (vài clock cycle) nên không sao.
+    Nhưng nếu sau này thêm logic phức tạp trong ISR, cần phân chia
+    priority cho phù hợp.
+
+    → GIỮ NGUYÊN nếu ISR đơn giản. Lưu ý khi mở rộng code.
+
+───────────────────────────────────────────────────────────────────────────────
+ B3. KHUYẾN NGHỊ CẢI THIỆN
+───────────────────────────────────────────────────────────────────────────────
+
+  [1] Thêm điện trở pull-up ngoài 10kΩ cho các chân CS (PA4, PB0, PB1)
+      lên 3.3V. Đảm bảo CS = HIGH trong lúc MCU đang reset/khởi động,
+      tránh giao tiếp SPI "rác" với driver.
+
+  [2] Thêm tụ lọc 100nF bypass gần mỗi IC TMC2240 (chân VCC_IO).
+
+  [3] Xem xét dùng hardware PWM cho STEP thay vì GPIO toggle trong ISR:
+      - PB3 có thể remap thành TIM2_CH2
+      - PB4 có thể remap thành TIM3_CH1
+      - PB5 có thể remap thành TIM3_CH2
+      → Tuy nhiên cách hiện tại (software toggle) vẫn hoạt động tốt
+        và linh hoạt hơn cho điều khiển tốc độ biến thiên.
+
+  [4] Nếu dùng motor lớn (>2A), cần heat sink cho TMC2240 và đảm bảo
+      PCB có thermal pad kết nối tốt xuống copper pour.
+
+  CÁC MỤC ĐÃ KIỂM TRA VÀ ĐÚNG (KHÔNG CÓ LỖI):
+  ─────────────────────────────────────────────────
+  ✓ Clock: HSE 25MHz → PLL → SYSCLK 96MHz, APB1=48MHz, APB2=96MHz
+  ✓ SPI1: Mode 3 (CPOL=HIGH, CPHA=2Edge), 1.5MHz, Full Duplex Master
+  ✓ USART2: 115200 8N1, DMA RX Circular + TX Normal
+  ✓ USART1: 115200 8N1, interrupt mode
+  ✓ GPIO STEP: PB3/PB4/PB5, Very High speed, Output PP
+  ✓ GPIO DIR: PB6/PB7/PB8, Low speed, Output PP
+  ✓ GPIO EN: PB9/PB10/PA8, initial HIGH (driver tắt mặc định)
+  ✓ GPIO CS: PA4/PB0/PB1, High speed, initial HIGH (SPI idle)
+  ✓ GPIO LIMIT: PB12/PB13/PB14, EXTI Falling, Pull-up nội
+  ✓ DMA init trước USART2 init (đúng thứ tự)
+  ✓ NVIC priority phân cấp hợp lý
+  ✓ Interrupt handlers đầy đủ trong stm32f4xx_it.c
+  ✓ TIM5 dùng làm microsecond counter (không cần interrupt)
+  ✓ Flash Latency = 3 (đúng cho 96MHz ở 3.3V)
+  ✓ Không có xung đột chân (pin conflict)
+  ✓ PB3/PB4 đã được giải phóng khỏi JTAG (dùng SWD thay vì JTAG)
+
+
+═══════════════════════════════════════════════════════════════════════════════
+ PHẦN C: BẢNG PHÂN BỔ CHÂN MCU ĐẦY ĐỦ
+═══════════════════════════════════════════════════════════════════════════════
+
+───────────────────────────────────────────────────────────────────────────────
+ C1. BẢNG CHÂN ĐÃ SỬ DỤNG (CHI TIẾT)
+───────────────────────────────────────────────────────────────────────────────
+
+  Tổng: 24 chân chức năng + 2 chân thạch anh + 2 chân SWD = 28 chân
+
+  ┌───────┬──────────┬──────────┬───────────┬──────────┬──────────┬────────────────────────────┐
+  │ Chân  │ Nhãn     │ Hướng    │ Kiểu      │ Tốc độ   │ Pull     │ Ghi chú                    │
+  ├───────┼──────────┼──────────┼───────────┼──────────┼──────────┼────────────────────────────┤
+  │       │          │  ═══ SPI1 BUS (chung 3 driver TMC2240) ═══                              │
+  │ PA5   │ SPI1_SCK │ AF Out   │ AF PP     │ Very High│ No Pull  │ Clock SPI, AF5             │
+  │ PA6   │ SPI1_MISO│ AF In    │ AF PP     │ Very High│ No Pull  │ Data từ TMC2240, AF5       │
+  │ PA7   │ SPI1_MOSI│ AF Out   │ AF PP     │ Very High│ No Pull  │ Data tới TMC2240, AF5      │
+  ├───────┼──────────┼──────────┼───────────┼──────────┼──────────┼────────────────────────────┤
+  │       │          │  ═══ CS PINS (Chip Select riêng từng driver) ═══                        │
+  │ PA4   │ CS_X     │ Output   │ Push-Pull │ High     │ No Pull  │ Mặc định HIGH, LOW=chọn    │
+  │ PB0   │ CS_Y     │ Output   │ Push-Pull │ High     │ No Pull  │ Mặc định HIGH, LOW=chọn    │
+  │ PB1   │ CS_Z     │ Output   │ Push-Pull │ High     │ No Pull  │ Mặc định HIGH, LOW=chọn    │
+  ├───────┼──────────┼──────────┼───────────┼──────────┼──────────┼────────────────────────────┤
+  │       │          │  ═══ TRỤC X ═══                                                         │
+  │ PB3   │ X_STEP   │ Output   │ Push-Pull │ Very High│ No Pull  │ Xung bước, mặc định LOW    │
+  │ PB6   │ X_DIR    │ Output   │ Push-Pull │ Low      │ No Pull  │ Hướng quay, mặc định LOW   │
+  │ PB9   │ X_EN     │ Output   │ Push-Pull │ Low      │ No Pull  │ Enable, mặc định HIGH(tắt) │
+  │ PB12  │ X_LIMIT  │ Input    │ EXTI Fall │ -        │ Pull-Up  │ Công tắc NO, ngắt cạnh xuống│
+  ├───────┼──────────┼──────────┼───────────┼──────────┼──────────┼────────────────────────────┤
+  │       │          │  ═══ TRỤC Y ═══                                                         │
+  │ PB4   │ Y_STEP   │ Output   │ Push-Pull │ Very High│ No Pull  │ Xung bước, mặc định LOW    │
+  │ PB7   │ Y_DIR    │ Output   │ Push-Pull │ Low      │ No Pull  │ Hướng quay, mặc định LOW   │
+  │ PB10  │ Y_EN     │ Output   │ Push-Pull │ Low      │ No Pull  │ Enable, mặc định HIGH(tắt) │
+  │ PB13  │ Y_LIMIT  │ Input    │ EXTI Fall │ -        │ Pull-Up  │ Công tắc NO, ngắt cạnh xuống│
+  ├───────┼──────────┼──────────┼───────────┼──────────┼──────────┼────────────────────────────┤
+  │       │          │  ═══ TRỤC Z ═══                                                         │
+  │ PB5   │ Z_STEP   │ Output   │ Push-Pull │ Very High│ No Pull  │ Xung bước, mặc định LOW    │
+  │ PB8   │ Z_DIR    │ Output   │ Push-Pull │ Low      │ No Pull  │ Hướng quay, mặc định LOW   │
+  │ PA8   │ Z_EN     │ Output   │ Push-Pull │ Low      │ No Pull  │ Enable, mặc định HIGH(tắt) │
+  │ PB14  │ Z_LIMIT  │ Input    │ EXTI Fall │ -        │ Pull-Up  │ Công tắc NO, ngắt cạnh xuống│
+  ├───────┼──────────┼──────────┼───────────┼──────────┼──────────┼────────────────────────────┤
+  │       │          │  ═══ UART ═══                                                           │
+  │ PA2   │ USART2_TX│ AF Out   │ AF PP     │ Very High│ No Pull  │ Gửi data tới PC (Python)   │
+  │ PA3   │ USART2_RX│ AF In    │ AF PP     │ Very High│ No Pull  │ Nhận lệnh từ PC, DMA Circ  │
+  │ PA9   │ USART1_TX│ AF Out   │ AF PP     │ Very High│ No Pull  │ Debug log (printf)         │
+  │ PA10  │ USART1_RX│ AF In    │ AF PP     │ Very High│ No Pull  │ Debug input (tùy chọn)     │
+  ├───────┼──────────┼──────────┼───────────┼──────────┼──────────┼────────────────────────────┤
+  │       │          │  ═══ KHÁC ═══                                                           │
+  │ PC13  │ LED      │ Output   │ Push-Pull │ Low      │ No Pull  │ LED on-board, Active LOW   │
+  └───────┴──────────┴──────────┴───────────┴──────────┴──────────┴────────────────────────────┘
+
+───────────────────────────────────────────────────────────────────────────────
+ C2. BẢNG CHÂN CÒN TRỐNG (DỰ PHÒNG MỞ RỘNG)
+───────────────────────────────────────────────────────────────────────────────
+
+  Có trên package UFQFPN48, chưa dùng trong firmware:
+
+  ┌───────┬─────────────────────────────────────────────────────────────┐
+  │ Chân  │ Chức năng khả dụng (Alternate Function)                    │
+  ├───────┼─────────────────────────────────────────────────────────────┤
+  │ PA0   │ TIM2_CH1, TIM5_CH1, USART2_CTS, ADC1_IN0                  │
+  │ PA1   │ TIM2_CH2, TIM5_CH2, USART2_RTS, ADC1_IN1                  │
+  │ PA11  │ USB_DM, TIM1_CH4                                           │
+  │ PA12  │ USB_DP, TIM1_ETR                                           │
+  │ PA15  │ TIM2_CH1/TIM2_ETR, SPI1_NSS, SPI3_NSS                     │
+  │ PB2   │ GPIO only (BOOT1 trên một số board)                        │
+  │ PB15  │ TIM1_CH3N, SPI2_MOSI, I2S2_SD                              │
+  │ PC14  │ OSC32_IN (nếu dùng LSE), hoặc GPIO                        │
+  │ PC15  │ OSC32_OUT (nếu dùng LSE), hoặc GPIO                       │
+  └───────┴─────────────────────────────────────────────────────────────┘
+
+  GỢI Ý SỬ DỤNG CHÂN DỰ PHÒNG:
+    - PA0/PA1: Encoder input (TIM2 hoặc TIM5 encoder mode)
+    - PA0/PA1: ADC input (đo dòng, đo nhiệt độ)
+    - PA11/PA12: USB CDC (giao tiếp PC không cần converter)
+    - PA15: Thêm 1 CS cho thiết bị SPI thứ 4
+    - PB2: GPIO dự phòng (Emergency Stop button?)
+    - PB15: SPI2 cho thiết bị phụ
+
+───────────────────────────────────────────────────────────────────────────────
+ C3. CHÂN HỆ THỐNG (KHÔNG DÙNG CHO MẠCH MỞ RỘNG)
+───────────────────────────────────────────────────────────────────────────────
+
+  ┌───────┬────────────────────────────────────────────────┐
+  │ Chân  │ Chức năng                                      │
+  ├───────┼────────────────────────────────────────────────┤
+  │ PA13  │ SYS_SWDIO (Debug SWD) - KHÔNG ĐƯỢC SỬ DỤNG    │
+  │ PA14  │ SYS_SWCLK (Debug SWD) - KHÔNG ĐƯỢC SỬ DỤNG    │
+  │ PH0   │ HSE_OSC_IN (thạch anh 25MHz)                  │
+  │ PH1   │ HSE_OSC_OUT (thạch anh 25MHz)                 │
+  │ NRST  │ Reset MCU                                      │
+  │ VBAT  │ Battery backup (nối 3.3V nếu không dùng)      │
+  │ VDD   │ Nguồn 3.3V                                    │
+  │ VSS   │ GND                                            │
+  │ VDDA  │ Nguồn analog 3.3V                             │
+  │ VSSA  │ GND analog                                     │
+  └───────┴────────────────────────────────────────────────┘
+
+  ⚠ QUAN TRỌNG: PA13/PA14 PHẢI để dành cho SWD debug.
+    Nếu dùng cho GPIO sẽ KHÔNG THỂ nạp/debug firmware qua SWD!
+
+
+═══════════════════════════════════════════════════════════════════════════════
+ PHẦN D: THIẾT KẾ MẠCH MỞ RỘNG - CHI TIẾT PHẦN CỨNG
+═══════════════════════════════════════════════════════════════════════════════
+
+───────────────────────────────────────────────────────────────────────────────
+ D1. GIAO TIẾP SPI VỚI TMC2240 (3 DRIVER)
+───────────────────────────────────────────────────────────────────────────────
+
+  ■ THÔNG SỐ SPI:
+    - Chế độ: SPI Mode 3 (CPOL=1, CPHA=1)
+    - Tốc độ: 1.5 MHz (có thể tăng lên 4 MHz sau khi ổn định)
+    - Dữ liệu: 8-bit, MSB first
+    - NSS: Software (MCU tự điều khiển CS qua GPIO)
+
+  ■ KẾT NỐI (BUS CHUNG, CS RIÊNG):
+    3 driver TMC2240 chia sẻ chung bus SPI (SCK, MOSI, MISO)
+    Mỗi driver có 1 chân CS riêng biệt.
+
+    MCU (PA5) ──── SCK  ────┬──── SCK  TMC2240_X
+                             ├──── SCK  TMC2240_Y
+                             └──── SCK  TMC2240_Z
+
+    MCU (PA7) ──── MOSI ────┬──── SDI  TMC2240_X
+                             ├──── SDI  TMC2240_Y
+                             └──── SDI  TMC2240_Z
+
+    MCU (PA6) ──── MISO ────┬──── SDO  TMC2240_X
+                             ├──── SDO  TMC2240_Y
+                             └──── SDO  TMC2240_Z
+
+    MCU (PA4) ──── CS_X ────────── CSN  TMC2240_X
+    MCU (PB0) ──── CS_Y ────────── CSN  TMC2240_Y
+    MCU (PB1) ──── CS_Z ────────── CSN  TMC2240_Z
+
+  ■ ĐIỆN TRỞ PULL-UP CHO CS (KHUYẾN NGHỊ):
+    Thêm 10kΩ pull-up từ mỗi chân CS lên 3.3V:
+
+    3.3V ──┬── R1 10kΩ ──── PA4 (CS_X)
+            ├── R2 10kΩ ──── PB0 (CS_Y)
+            └── R3 10kΩ ──── PB1 (CS_Z)
+
+    Lý do: Khi MCU đang reset, các chân GPIO ở trạng thái Hi-Z.
+    Pull-up đảm bảo CS = HIGH → driver không bị chọn → không nhận
+    lệnh SPI "rác" trong quá trình khởi động.
+
+  ■ LƯU Ý ĐƯỜNG DÂY SPI:
+    - Độ dài tối đa khuyến nghị: 15cm (ngắn hơn = tốt hơn)
+    - Không cần điện trở nối tiếp trên SCK/MOSI/MISO
+    - Đường MISO có thể cần điện trở 33Ω nối tiếp nếu > 10cm
+    - Đi dây song song, tránh chạy gần nguồn motor (nhiễu EMI)
+
+  ■ CHÂN TMC2240 LIÊN QUAN SPI (theo datasheet):
+    ┌──────────┬────────────────────────────────────────┐
+    │ Chân TMC │ Kết nối                                │
+    ├──────────┼────────────────────────────────────────┤
+    │ CSN      │ ← CS_X/Y/Z từ MCU (Active LOW)        │
+    │ SCK      │ ← SPI1_SCK từ MCU                     │
+    │ SDI      │ ← SPI1_MOSI từ MCU                    │
+    │ SDO      │ → SPI1_MISO tới MCU                   │
+    │ VCC_IO   │ ← 3.3V (logic level reference)        │
+    └──────────┴────────────────────────────────────────┘
+
+    ⚠ VCC_IO của TMC2240 PHẢI = 3.3V (khớp với mức logic MCU)
+
+───────────────────────────────────────────────────────────────────────────────
+ D2. MẠCH ĐIỀU KHIỂN STEP / DIR / EN
+───────────────────────────────────────────────────────────────────────────────
+
+  Mỗi trục cần 3 tín hiệu điều khiển nối trực tiếp từ MCU tới driver:
+
+  ■ TRỤC X:
+    MCU PB3  (X_STEP) ─────────── STEP  TMC2240_X
+    MCU PB6  (X_DIR)  ─────────── DIR   TMC2240_X
+    MCU PB9  (X_EN)   ─────────── EN    TMC2240_X
+
+  ■ TRỤC Y:
+    MCU PB4  (Y_STEP) ─────────── STEP  TMC2240_Y
+    MCU PB7  (Y_DIR)  ─────────── DIR   TMC2240_Y
+    MCU PB10 (Y_EN)   ─────────── EN    TMC2240_Y
+
+  ■ TRỤC Z:
+    MCU PB5  (Z_STEP) ─────────── STEP  TMC2240_Z
+    MCU PB8  (Z_DIR)  ─────────── DIR   TMC2240_Z
+    MCU PA8  (Z_EN)   ─────────── EN    TMC2240_Z
+
+  ■ THÔNG SỐ TÍN HIỆU:
+    ┌──────────┬───────────┬──────────────────────────────────────┐
+    │ Tín hiệu │ Logic     │ Mô tả                                │
+    ├──────────┼───────────┼──────────────────────────────────────┤
+    │ STEP     │ Rising    │ Mỗi cạnh lên = 1 micro-step          │
+    │          │ edge      │ Tần số max thực tế: ~40kHz            │
+    │          │           │ Tốc độ GPIO: Very High (cạnh sắc nét) │
+    ├──────────┼───────────┼──────────────────────────────────────┤
+    │ DIR      │ HIGH/LOW  │ HIGH = chiều thuận, LOW = chiều ngược │
+    │          │           │ Phải set TRƯỚC khi gửi STEP           │
+    │          │           │ Setup time tối thiểu: 20ns (TMC2240)  │
+    ├──────────┼───────────┼──────────────────────────────────────┤
+    │ EN       │ Active LOW│ LOW = driver BẬT (motor giữ lực)     │
+    │          │           │ HIGH = driver TẮT (motor tự do quay)  │
+    │          │           │ Mặc định HIGH khi MCU khởi động       │
+    └──────────┴───────────┴──────────────────────────────────────┘
+
+  ■ KHUYẾN NGHỊ:
+    - Không cần buffer/level shifter (MCU 3.3V, TMC2240 VCC_IO = 3.3V)
+    - Nối trực tiếp, dây ngắn < 20cm
+    - Nếu dây dài > 20cm: thêm điện trở 33Ω nối tiếp trên STEP
+      để giảm ringing/overshoot
+    - Thêm pull-up 10kΩ trên EN lên 3.3V: đảm bảo driver TẮT
+      khi MCU chưa khởi động xong
+
+───────────────────────────────────────────────────────────────────────────────
+ D3. MẠCH CÔNG TẮC HÀNH TRÌNH (LIMIT SWITCH)
+───────────────────────────────────────────────────────────────────────────────
+
+  ■ LOẠI CÔNG TẮC: Normally Open (NO)
+    Khi chưa nhấn: mạch hở → chân MCU = HIGH (nhờ pull-up)
+    Khi nhấn: mạch đóng → chân MCU = LOW (nối GND)
+
+  ■ SƠ ĐỒ KẾT NỐI MỖI CÔNG TẮC:
+
+    3.3V ── R_pu 10kΩ ──┬── PB12 (X_LIMIT)
+                         │
+                      [SW_X] (NO)
+                         │
+                        GND
+
+    3.3V ── R_pu 10kΩ ──┬── PB13 (Y_LIMIT)
+                         │
+                      [SW_Y] (NO)
+                         │
+                        GND
+
+    3.3V ── R_pu 10kΩ ──┬── PB14 (Z_LIMIT)
+                         │
+                      [SW_Z] (NO)
+                         │
+                        GND
+
+  ■ LƯU Ý VỀ PULL-UP:
+    MCU đã bật pull-up nội (~40kΩ) trong firmware.
+    Tuy nhiên, KHUYẾN NGHỊ thêm pull-up ngoài 10kΩ vì:
+    - Pull-up nội yếu, dễ bị nhiễu trên dây dài
+    - Dây đến công tắc thường dài (30-100cm)
+    - Pull-up ngoài 10kΩ mạnh hơn, chống nhiễu tốt hơn
+
+  ■ MẠCH LỌC NHIỄU PHẦN CỨNG (TÙY CHỌN NHƯNG KHUYẾN NGHỊ):
+
+    Thêm tụ lọc RC cho mỗi kênh limit switch:
+
+    PBxx ── R_filter 1kΩ ──┬── Tới chân MCU (PB12/13/14)
+                            │
+                          C_filter 100nF
+                            │
+                           GND
+
+    RC time constant = 1kΩ × 100nF = 100μs
+    → Lọc nhiễu xung < 100μs, đủ cho debounce cơ khí
+    → Firmware vẫn nên có software debounce 5-50ms
+
+    Hoặc đơn giản hơn: chỉ thêm tụ 100nF song song với công tắc:
+
+    3.3V ── R_pu 10kΩ ──┬── PB12
+                         │
+                      [SW_X] ──┤ C 100nF ├── GND
+                         │
+                        GND
+
+  ■ ĐẦU NỐI CHO CÔNG TẮC HÀNH TRÌNH:
+    Dùng JST XH 2-pin hoặc screw terminal 2-pin cho mỗi công tắc:
+    - Chân 1: Tín hiệu (nối về PBxx qua mạch lọc)
+    - Chân 2: GND
+
+  ■ CẤU HÌNH NGẮT TRONG FIRMWARE:
+    - Chế độ: EXTI Falling Edge (cạnh xuống)
+    - Interrupt: EXTI15_10 (PB12, PB13, PB14 đều nằm nhóm EXTI 10-15)
+    - Priority: 1 (cao thứ 2, chỉ sau timer step)
+    - Khi ngắt xảy ra: dừng motor ngay lập tức (an toàn)
+
+───────────────────────────────────────────────────────────────────────────────
+ D4. GIAO TIẾP UART (PYTHON + DEBUG)
+───────────────────────────────────────────────────────────────────────────────
+
+  ■ USART2 - GIAO TIẾP CHÍNH VỚI PC (PYTHON):
+    ┌──────────┬──────────┬────────────────────────────┐
+    │ MCU      │ Hướng    │ Nối tới                    │
+    ├──────────┼──────────┼────────────────────────────┤
+    │ PA2 (TX) │ MCU → PC │ RX của USB-UART converter  │
+    │ PA3 (RX) │ PC → MCU │ TX của USB-UART converter  │
+    │ GND      │ chung    │ GND của converter          │
+    └──────────┴──────────┴────────────────────────────┘
+    Thông số: 115200 baud, 8N1
+    DMA: RX Circular (nhận liên tục), TX Normal (gửi theo yêu cầu)
+
+  ■ USART1 - DEBUG LOG:
+    ┌──────────┬──────────┬────────────────────────────┐
+    │ MCU      │ Hướng    │ Nối tới                    │
+    ├──────────┼──────────┼────────────────────────────┤
+    │ PA9 (TX) │ MCU → PC │ RX của USB-UART adapter    │
+    │ PA10(RX) │ PC → MCU │ TX của adapter (tùy chọn)  │
+    │ GND      │ chung    │ GND của adapter            │
+    └──────────┴──────────┴────────────────────────────┘
+    Thông số: 115200 baud, 8N1
+    Chế độ: Interrupt (không dùng DMA)
+
+  ■ ĐẦU NỐI UART TRÊN MẠCH MỞ RỘNG:
+    Tạo 2 header 4-pin (2.54mm pitch) cho mỗi cổng UART:
+
+    Header UART2 (Python):      Header UART1 (Debug):
+    ┌─────┬──────┐              ┌─────┬──────┐
+    │ Pin │ Tín  │              │ Pin │ Tín  │
+    ├─────┼──────┤              ├─────┼──────┤
+    │  1  │ 3.3V │              │  1  │ 3.3V │
+    │  2  │ TX   │              │  2  │ TX   │
+    │  3  │ RX   │              │  3  │ RX   │
+    │  4  │ GND  │              │  4  │ GND  │
+    └─────┴──────┘              └─────┴──────┘
+
+    ⚠ Logic level = 3.3V. KHÔNG NỐI TRỰC TIẾP VỚI THIẾT BỊ 5V!
+    Nếu cần 5V: dùng module USB-UART có mức logic 3.3V,
+    hoặc thêm mạch level shifter.
+
+───────────────────────────────────────────────────────────────────────────────
+ D5. HEADER KẾT NỐI VỚI BLACKPILL
+───────────────────────────────────────────────────────────────────────────────
+
+  Board BlackPill V3.1 có 2 hàng header 20-pin (2.54mm pitch).
+  Mạch mở rộng cần có 2 hàng socket cái tương ứng để cắm BlackPill.
+
+  ■ SƠ ĐỒ CHÂN BLACKPILL (NHÌN TỪ TRÊN, USB BÊN TRÁI):
+
+  Hàng trái (Top view):              Hàng phải (Top view):
+  ┌──────────────────────┐           ┌──────────────────────┐
+  │ Pin │ Chức năng      │           │ Pin │ Chức năng      │
+  ├─────┼────────────────┤           ├─────┼────────────────┤
+  │ B12 │ X_LIMIT        │           │ 3V3 │ Nguồn 3.3V    │
+  │ B13 │ Y_LIMIT        │           │ GND │ Mass           │
+  │ B14 │ Z_LIMIT        │           │ 5V  │ Nguồn 5V(USB) │
+  │ B15 │ (trống)        │           │ B9  │ X_EN           │
+  │ A8  │ Z_EN           │           │ B8  │ Z_DIR          │
+  │ A9  │ USART1_TX      │           │ B7  │ Y_DIR          │
+  │ A10 │ USART1_RX      │           │ B6  │ X_DIR          │
+  │ A11 │ (trống/USB_DM) │           │ B5  │ Z_STEP         │
+  │ A12 │ (trống/USB_DP) │           │ B4  │ Y_STEP         │
+  │ A15 │ (trống)        │           │ B3  │ X_STEP         │
+  │ B3  │ X_STEP         │           │ A15 │ (trống)        │
+  │ B4  │ Y_STEP         │           │ A12 │ (trống/USB)    │
+  │ B5  │ Z_STEP         │           │ A11 │ (trống/USB)    │
+  │ B6  │ X_DIR          │           │ A10 │ USART1_RX      │
+  │ B7  │ Y_DIR          │           │ A9  │ USART1_TX      │
+  │ B8  │ Z_DIR          │           │ A8  │ Z_EN           │
+  │ B9  │ X_EN           │           │ B15 │ (trống)        │
+  │ 5V  │ Nguồn          │           │ B14 │ Z_LIMIT        │
+  │ GND │ Mass           │           │ B13 │ Y_LIMIT        │
+  │ 3V3 │ Nguồn 3.3V    │           │ B12 │ X_LIMIT        │
+  └─────┴────────────────┘           └─────┴────────────────┘
+
+  ⚠ LƯU Ý: Sơ đồ trên là gợi ý. Vui lòng kiểm tra lại pinout
+    chính xác của board WeAct BlackPill V3.1 trước khi vẽ mạch.
+    Tham khảo: https://github.com/WeActStudio/WeActStudio.MiniSTM32F4x1
+
+  Hàng khác (phía có PA0-PA7):
+  ┌─────┬────────────────┐
+  │ Pin │ Chức năng      │
+  ├─────┼────────────────┤
+  │ A0  │ (trống)        │
+  │ A1  │ (trống)        │
+  │ A2  │ USART2_TX      │
+  │ A3  │ USART2_RX      │
+  │ A4  │ CS_X           │
+  │ A5  │ SPI1_SCK       │
+  │ A6  │ SPI1_MISO      │
+  │ A7  │ SPI1_MOSI      │
+  │ B0  │ CS_Y           │
+  │ B1  │ CS_Z           │
+  │ B10 │ Y_EN           │
+  │ B2  │ (trống/BOOT1)  │
+  │ ...                   │
+  └─────┴────────────────┘
+
+───────────────────────────────────────────────────────────────────────────────
+ D6. NGUỒN CẤP VÀ BẢO VỆ
+───────────────────────────────────────────────────────────────────────────────
+
+  ■ CÁC MỨC NGUỒN TRONG HỆ THỐNG:
+    ┌──────────┬────────────┬────────────────────────────────────┐
+    │ Nguồn    │ Điện áp    │ Cung cấp cho                      │
+    ├──────────┼────────────┼────────────────────────────────────┤
+    │ VM       │ 12-48V DC  │ Nguồn motor (qua TMC2240)         │
+    │ 5V       │ 5V (USB)   │ BlackPill regulator → 3.3V        │
+    │ 3.3V     │ 3.3V       │ MCU, VCC_IO của TMC2240           │
+    └──────────┴────────────┴────────────────────────────────────┘
+
+  ■ NGUỒN MOTOR (VM):
+    - Input: Jack DC hoặc screw terminal 2-pin (≥ 16AWG cho dòng lớn)
+    - Điện áp: 12V - 48V DC (tùy motor)
+    - Dòng: Tối thiểu = 3 × (dòng motor max / trục)
+      Ví dụ: 3 motor NEMA17 × 1.5A = 4.5A minimum, khuyến nghị 6A
+    - Tụ lọc đầu vào: 1 × 100μF/63V electrolytic + 1 × 100nF ceramic
+      ĐẶT GẦN connector đầu vào VM
+
+  ■ NGUỒN LOGIC (3.3V):
+    - Lấy từ chân 3.3V của BlackPill (regulator on-board)
+    - Dòng cung cấp: ~300mA (đủ cho MCU + VCC_IO 3 driver)
+    - Mỗi driver TMC2240 cần ~10-20mA cho VCC_IO
+    - Tụ lọc: 100nF bypass gần mỗi chân VCC_IO của TMC2240
+
+  ■ BẢO VỆ MẠCH:
+    1. Diode chống ngược cực trên VM:
+       VM_IN ── D1 (Schottky, ≥3A) ──── VM_OUT
+       Hoặc MOSFET chống ngược nếu cần hiệu suất cao.
+
+    2. TVS diode trên đường VM (chống xung):
+       TVS (bidirectional, clamp ≥ 1.2 × VM_max)
+       giữa VM và GND.
+
+    3. Tụ bulk lớn trên VM:
+       470μF - 1000μF / 63V electrolytic
+       Giảm ripple khi motor tăng tốc/giảm tốc.
+
+    4. LED báo nguồn:
+       VM: LED đỏ + R 10kΩ (12V) hoặc R 22kΩ (24V)
+       3.3V: LED xanh + R 1kΩ
+
+  ■ THỨ TỰ CẤP NGUỒN AN TOÀN:
+    1. Cấp nguồn logic (3.3V/USB) trước
+    2. MCU khởi động → EN = HIGH (driver tắt)
+    3. Cấp nguồn motor (VM) sau
+    → Nếu VM cấp trước, driver có thể ở trạng thái không xác định
+    → Pull-up ngoài trên EN giúp giảm rủi ro này
+
+
+═══════════════════════════════════════════════════════════════════════════════
+ PHẦN E: SƠ ĐỒ NGUYÊN LÝ GỢI Ý
+═══════════════════════════════════════════════════════════════════════════════
+
+───────────────────────────────────────────────────────────────────────────────
+ E1. SƠ ĐỒ KẾT NỐI TỔNG THỂ (MỖI TRỤC)
+───────────────────────────────────────────────────────────────────────────────
+
+  Mỗi trục giống nhau về cấu trúc. Ví dụ cho TRỤC X:
+
+  ┌──────────────────────────────────────────────────────────────────────┐
+  │                                                                      │
+  │  ┌─────────────┐        ┌──────────────────────────┐                │
+  │  │             │        │        TMC2240_X          │                │
+  │  │             │        │                           │                │
+  │  │  PA5 (SCK)  │──────> │ SCK                      │                │
+  │  │  PA7 (MOSI) │──────> │ SDI                      │   ┌─────────┐ │
+  │  │  PA6 (MISO) │<────── │ SDO                      │   │         │ │
+  │  │  PA4 (CS_X) │──┤R│─> │ CSN                      │   │ Motor X │ │
+  │  │             │        │              OA1  ────────│───│ Coil A  │ │
+  │  │  PB3 (STEP) │──────> │ STEP         OA2  ────────│───│         │ │
+  │  │  PB6 (DIR)  │──────> │ DIR          OB1  ────────│───│ Coil B  │ │
+  │  │  PB9 (EN)   │──┤R│─> │ EN           OB2  ────────│───│         │ │
+  │  │             │        │                           │   └─────────┘ │
+  │  │             │        │ VCC_IO ← 3.3V (+ 100nF)  │                │
+  │  │             │        │ VM     ← 12-48V (+ tụ)    │                │
+  │  │             │        │ GND    ← GND chung        │                │
+  │  │             │        └──────────────────────────┘                │
+  │  │             │                                                     │
+  │  │  PB12       │<────── R1kΩ ──┬── 3.3V                             │
+  │  │ (X_LIMIT)   │               │                                     │
+  │  │             │           ┌───┤ C100nF                              │
+  │  │             │           │   │                                     │
+  │  └─────────────┘       [SW_X]  └── R10kΩ ── 3.3V                   │
+  │                            │                                         │
+  │                           GND                                        │
+  │                                                                      │
+  └──────────────────────────────────────────────────────────────────────┘
+
+  (Trục Y và Z: giống hệt, thay đổi chân MCU theo bảng C1)
+
+───────────────────────────────────────────────────────────────────────────────
+ E2. MẠCH NGUỒN
+───────────────────────────────────────────────────────────────────────────────
+
+  ■ NGUỒN MOTOR (VM):
+
+    DC Jack/Terminal ──── D1 (Schottky) ──┬── VM_BUS ──> 3 × TMC2240
+                                          │
+                                     C_bulk 470μF/63V
+                                          │
+                                         GND
+
+    VM_BUS ──── TVS diode (bidirectional) ──── GND
+    VM_BUS ──── LED đỏ + R ──── GND
+
+  ■ NGUỒN LOGIC (3.3V):
+
+    BlackPill 3V3 pin ──┬──── 3V3_BUS ──> VCC_IO (3 driver)
+                         │                  ──> Pull-up resistors
+                         │                  ──> Mạch lọc limit SW
+                    C 10μF/10V tantalum
+                         │
+                        GND
+
+    3V3_BUS ──── LED xanh + R1kΩ ──── GND
+
+───────────────────────────────────────────────────────────────────────────────
+ E3. CONNECTOR DRIVER (GỢI Ý CHO MỖI TMC2240)
+───────────────────────────────────────────────────────────────────────────────
+
+  Dùng header 2×8 pin hoặc 1×16 pin cho mỗi driver module:
+
+  Nếu dùng board TMC2240 module (breakout):
+  ┌─────┬───────────────────┐
+  │ Pin │ Tín hiệu          │
+  ├─────┼───────────────────┤
+  │  1  │ VM (12-48V)       │
+  │  2  │ GND               │
+  │  3  │ VCC_IO (3.3V)     │
+  │  4  │ SCK               │
+  │  5  │ SDI (MOSI)        │
+  │  6  │ SDO (MISO)        │
+  │  7  │ CSN               │
+  │  8  │ STEP              │
+  │  9  │ DIR               │
+  │ 10  │ EN                │
+  │ 11  │ OA1 (Motor A+)    │
+  │ 12  │ OA2 (Motor A-)    │
+  │ 13  │ OB1 (Motor B+)    │
+  │ 14  │ OB2 (Motor B-)    │
+  │ 15  │ GND               │
+  │ 16  │ DIAG (tùy chọn)   │
+  └─────┴───────────────────┘
+
+  Hoặc nếu TMC2240 hàn trực tiếp trên expansion board:
+  → Chỉ cần screw terminal 4-pin cho motor (OA1/OA2/OB1/OB2)
+  → Và screw terminal 2-pin cho VM + GND
+
+───────────────────────────────────────────────────────────────────────────────
+ E4. CONNECTOR CÔNG TẮC HÀNH TRÌNH
+───────────────────────────────────────────────────────────────────────────────
+
+  Dùng JST XH 2-pin hoặc screw terminal 2-pin cho mỗi công tắc:
+
+  ┌────────────────────────────┐
+  │ LIMIT X: J_LX              │
+  │  Pin 1: Signal (→ PB12)   │
+  │  Pin 2: GND               │
+  ├────────────────────────────┤
+  │ LIMIT Y: J_LY              │
+  │  Pin 1: Signal (→ PB13)   │
+  │  Pin 2: GND               │
+  ├────────────────────────────┤
+  │ LIMIT Z: J_LZ              │
+  │  Pin 1: Signal (→ PB14)   │
+  │  Pin 2: GND               │
+  └────────────────────────────┘
+
+  Trên mạch, giữa connector và chân MCU, đặt:
+  - R pull-up 10kΩ lên 3.3V (gần connector)
+  - Tụ lọc C 100nF xuống GND (gần connector)
+  - (Tùy chọn) R nối tiếp 1kΩ (gần MCU) cho thêm lọc RC
+
+
+═══════════════════════════════════════════════════════════════════════════════
+ PHẦN F: GHI CHÚ CHO NGƯỜI VẼ MẠCH (PCB LAYOUT)
+═══════════════════════════════════════════════════════════════════════════════
+
+───────────────────────────────────────────────────────────────────────────────
+ F1. QUY TẮC ĐI DÂY SPI
+───────────────────────────────────────────────────────────────────────────────
+
+  - Đường SPI (SCK, MOSI, MISO) phải ngắn nhất có thể
+  - Đi dây song song (parallel routing), không rẽ nhánh dài
+  - Tránh chạy gần đường motor power (VM, OA, OB)
+  - Khoảng cách tối thiểu giữa SPI trace và motor trace: 3mm
+  - Nếu 2 lớp PCB: SPI đi mặt trên, ground plane mặt dưới
+  - Chiều rộng trace SPI: 0.2 - 0.3mm (đủ cho 1.5MHz)
+  - Thêm via stitching quanh đường SPI nếu có ground plane
+
+  Thứ tự đi dây từ MCU:
+    MCU → TMC2240_X (gần nhất) → TMC2240_Y → TMC2240_Z (xa nhất)
+    CS riêng biệt, không cần chung tuyến.
+
+───────────────────────────────────────────────────────────────────────────────
+ F2. QUY TẮC NGUỒN
+───────────────────────────────────────────────────────────────────────────────
+
+  - Đường VM (12-48V): chiều rộng tối thiểu 1mm (dòng lớn)
+    Với 3A: ≥ 0.5mm trên copper 1oz, khuyến nghị 1-2mm
+    Với 6A: ≥ 1mm, khuyến nghị 2-3mm
+  - Đường GND: dùng copper pour (đổ đồng) toàn mặt
+  - GND motor và GND logic nên nối 1 điểm (star ground)
+    hoặc dùng ground plane chung nếu 4 lớp
+  - Đường 3.3V: 0.3 - 0.5mm đủ cho ~500mA
+  - Tụ bypass 100nF: ĐẶT SÁT chân IC, via ngắn xuống GND
+  - Tụ bulk VM: ĐẶT GẦN connector đầu vào, không đặt xa
+
+───────────────────────────────────────────────────────────────────────────────
+ F3. TỤ LỌC (DECOUPLING CAPACITORS)
+───────────────────────────────────────────────────────────────────────────────
+
+  ┌───────────────────────┬────────────┬──────────────────────────────────┐
+  │ Vị trí                │ Giá trị    │ Ghi chú                          │
+  ├───────────────────────┼────────────┼──────────────────────────────────┤
+  │ VCC_IO mỗi TMC2240   │ 100nF      │ Gốm, 0402-0805, sát chân IC     │
+  │ VM mỗi TMC2240       │ 100nF      │ Gốm + 10μF electrolytic          │
+  │ VM đầu vào (bulk)    │ 470μF/63V  │ Electrolytic, gần connector      │
+  │ VM đầu vào           │ 100nF      │ Gốm, song song bulk              │
+  │ 3V3 bus              │ 10μF/10V   │ Tantalum hoặc MLCC               │
+  │ 3V3 mỗi nhánh        │ 100nF      │ Gốm, gần tải                    │
+  └───────────────────────┴────────────┴──────────────────────────────────┘
+
+───────────────────────────────────────────────────────────────────────────────
+ F4. KÍCH THƯỚC VÀ LỚP PCB
+───────────────────────────────────────────────────────────────────────────────
+
+  ■ KÍCH THƯỚC GỢI Ý:
+    - Nếu TMC2240 dùng module cắm: 70mm × 90mm
+    - Nếu TMC2240 hàn trực tiếp: 80mm × 100mm
+    - Lỗ cố định: 4 lỗ M3, cách cạnh 3mm
+
+  ■ SỐ LỚP:
+    - Tối thiểu: 2 lớp (top = signal + power, bottom = GND pour)
+    - Khuyến nghị: 4 lớp (top signal, inner GND, inner power, bottom signal)
+      → Nếu motor dòng lớn (>3A/trục) hoặc SPI > 2MHz
+
+  ■ THÔNG SỐ CHẾ TẠO:
+    - Copper thickness: 1oz (35μm) minimum, 2oz tốt hơn cho nguồn
+    - Trace/space minimum: 0.2mm / 0.2mm (cho SPI)
+    - Via size: 0.3mm drill, 0.6mm pad
+    - Solder mask: cả 2 mặt
+    - Silkscreen: cả 2 mặt (đánh dấu tên chân, connector)
+
+
+═══════════════════════════════════════════════════════════════════════════════
+ PHẦN G: DANH SÁCH LINH KIỆN (BOM) GỢI Ý
+═══════════════════════════════════════════════════════════════════════════════
+
+  ┌─────┬────────────────────┬───────────┬────┬────────────────────────────┐
+  │ STT │ Linh kiện           │ Giá trị   │ SL │ Ghi chú                    │
+  ├─────┼────────────────────┼───────────┼────┼────────────────────────────┤
+  │     │  ═══ IC & MODULE ═══                                             │
+  │  1  │ TMC2240 module     │           │  3 │ Hoặc TMC2240 IC + mạch     │
+  │  2  │ WeAct BlackPill    │ F411CEU6  │  1 │ Module MCU                 │
+  ├─────┼────────────────────┼───────────┼────┼────────────────────────────┤
+  │     │  ═══ ĐIỆN TRỞ ═══                                                │
+  │  3  │ R pull-up CS       │ 10kΩ      │  3 │ PA4, PB0, PB1 lên 3.3V    │
+  │  4  │ R pull-up EN       │ 10kΩ      │  3 │ PB9, PB10, PA8 lên 3.3V   │
+  │  5  │ R pull-up LIMIT    │ 10kΩ      │  3 │ PB12, PB13, PB14 lên 3.3V │
+  │  6  │ R lọc LIMIT        │ 1kΩ       │  3 │ (tùy chọn) nối tiếp LIMIT │
+  │  7  │ R LED nguồn VM     │ 10kΩ-22kΩ │  1 │ Cho LED báo VM (12-24V)    │
+  │  8  │ R LED nguồn 3V3    │ 1kΩ       │  1 │ Cho LED báo 3.3V           │
+  ├─────┼────────────────────┼───────────┼────┼────────────────────────────┤
+  │     │  ═══ TỤ ĐIỆN ═══                                                 │
+  │  9  │ C bypass VCC_IO    │ 100nF     │  3 │ Gốm, gần VCC_IO TMC2240   │
+  │ 10  │ C bypass VM (gốm)  │ 100nF     │  3 │ Gốm, gần VM TMC2240       │
+  │ 11  │ C VM mỗi driver    │ 10μF/50V  │  3 │ Electrolytic, gần driver   │
+  │ 12  │ C bulk VM đầu vào  │ 470μF/63V │  1 │ Electrolytic, gần jack     │
+  │ 13  │ C bulk VM (gốm)    │ 100nF     │  1 │ Song song C bulk           │
+  │ 14  │ C bus 3V3           │ 10μF/10V  │  1 │ Tantalum/MLCC              │
+  │ 15  │ C lọc LIMIT        │ 100nF     │  3 │ (tùy chọn) gần connector   │
+  ├─────┼────────────────────┼───────────┼────┼────────────────────────────┤
+  │     │  ═══ BẢO VỆ ═══                                                  │
+  │ 16  │ D Schottky chống   │ ≥3A/60V   │  1 │ SS34 hoặc tương đương      │
+  │     │ ngược cực VM        │           │    │                            │
+  │ 17  │ TVS diode VM       │ ≥ clamp   │  1 │ Bidirectional, ≥1.2×VM     │
+  │     │                    │ 60V       │    │                            │
+  ├─────┼────────────────────┼───────────┼────┼────────────────────────────┤
+  │     │  ═══ LED ═══                                                     │
+  │ 18  │ LED đỏ (VM)        │ 3mm/0805  │  1 │ Báo có nguồn motor         │
+  │ 19  │ LED xanh (3V3)     │ 3mm/0805  │  1 │ Báo có nguồn logic         │
+  ├─────┼────────────────────┼───────────┼────┼────────────────────────────┤
+  │     │  ═══ CONNECTOR ═══                                               │
+  │ 20  │ Female header      │ 1×20 2.54 │  2 │ Socket cho BlackPill       │
+  │ 21  │ DC jack / Screw    │ 2-pin     │  1 │ Đầu vào nguồn motor VM    │
+  │     │ terminal           │ ≥16AWG    │    │                            │
+  │ 22  │ Header UART        │ 1×4 2.54  │  2 │ UART2(Python) + UART1(DBG)│
+  │ 23  │ JST XH / Screw     │ 2-pin     │  3 │ Limit switch X, Y, Z      │
+  │     │ terminal           │           │    │                            │
+  │ 24  │ Screw terminal     │ 4-pin     │  3 │ Motor X, Y, Z (4 dây)     │
+  │     │ motor              │ ≥18AWG    │    │                            │
+  │ 25  │ Header driver      │ xem E3    │  3 │ Nếu dùng module TMC2240   │
+  │     │ (nếu dùng module)  │           │    │ cắm rời                   │
+  ├─────┼────────────────────┼───────────┼────┼────────────────────────────┤
+  │     │  ═══ CƠ KHÍ ═══                                                 │
+  │ 26  │ Ốc vít M3          │ M3×6mm    │  4 │ Cố định PCB               │
+  │ 27  │ Đệm cách M3        │ 5-10mm    │  4 │ Nâng PCB khỏi bề mặt     │
+  └─────┴────────────────────┴───────────┴────┴────────────────────────────┘
+
+
+═══════════════════════════════════════════════════════════════════════════════
+ PHỤ LỤC: BẢNG TÓM TẮT NHANH CHO NGƯỜI VẼ MẠCH
+═══════════════════════════════════════════════════════════════════════════════
+
+  ┌──────────────────────────────────────────────────────────────────────────┐
+  │ THÔNG SỐ HỆ THỐNG                                                      │
+  ├────────────────────┬─────────────────────────────────────────────────────┤
+  │ MCU                │ STM32F411CEU6 (UFQFPN48)                          │
+  │ Board MCU          │ WeAct BlackPill V3.1                              │
+  │ Nguồn logic        │ 3.3V (từ regulator trên BlackPill)               │
+  │ Nguồn motor (VM)   │ 12-48V DC                                         │
+  │ Driver             │ TMC2240 × 3 (SPI Mode 3, 1.5MHz)                 │
+  │ SYSCLK             │ 96 MHz (HSE 25MHz + PLL)                         │
+  │ SPI Clock          │ 1.5 MHz (APB2 96MHz / 64)                        │
+  │ UART Baud          │ 115200 bps (cả USART1 và USART2)                 │
+  │ Số trục            │ 3 (X, Y, Z)                                      │
+  │ Công tắc hành trình│ 3 (Normally Open, ngắt cạnh xuống)               │
+  │ Logic level        │ 3.3V CMOS                                         │
+  ├────────────────────┴─────────────────────────────────────────────────────┤
+  │ TỔNG KẾT CHÂN SỬ DỤNG                                                  │
+  ├──────────────────────────────────────────────────────────────────────────┤
+  │ SPI: PA5(SCK), PA6(MISO), PA7(MOSI)                                   │
+  │ CS:  PA4(X), PB0(Y), PB1(Z)                                           │
+  │ STEP: PB3(X), PB4(Y), PB5(Z)                                          │
+  │ DIR:  PB6(X), PB7(Y), PB8(Z)                                          │
+  │ EN:   PB9(X), PB10(Y), PA8(Z)                                         │
+  │ LIMIT: PB12(X), PB13(Y), PB14(Z)                                      │
+  │ UART2: PA2(TX), PA3(RX) - giao tiếp Python                            │
+  │ UART1: PA9(TX), PA10(RX) - debug log                                  │
+  │ LED:  PC13 (Active LOW)                                                │
+  │ SWD:  PA13(SWDIO), PA14(SWCLK)                                        │
+  │ HSE:  PH0, PH1 (thạch anh 25MHz on-board)                            │
+  │ TRỐNG: PA0, PA1, PA11, PA12, PA15, PB2, PB15, PC14, PC15             │
+  └──────────────────────────────────────────────────────────────────────────┘
+
+═══════════════════════════════════════════════════════════════════════════════
+ KẾT THÚC TÀI LIỆU
+═══════════════════════════════════════════════════════════════════════════════
+ Phiên bản: 1.0
+ Ngày: 15/04/2026
+ Tác giả: Auto-generated từ phân tích firmware stepper_lib
+ File firmware: stepper_lib.ioc (CubeMX project, STM32F411CEU6)
+═══════════════════════════════════════════════════════════════════════════════

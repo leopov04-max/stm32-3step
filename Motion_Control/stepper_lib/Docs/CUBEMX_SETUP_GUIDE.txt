@@ -384,7 +384,7 @@
  Moi timer chay o che do interrupt-only (khong xuat PWM ra chan).
  ISR se toggle STEP pin qua GPIO.
 
- === TIM2 - Truc X (32-bit timer) ===
+ === TIM2 - Truc Z (32-bit timer, do phan giai cao) ===
 
    Trong Timers > TIM2:
      Clock Source: Internal Clock
@@ -403,6 +403,7 @@
      Prescaler = 95: TIM2 clock = 96MHz / (95+1) = 1MHz (1us/tick)
      ARR = 999: Ngat moi 1000us = 1ms = 1000 step/s (mac dinh)
        -> ARR se thay doi trong code de dieu khien toc do
+     TIM2 la 32-bit: do phan giai cao, phu hop truc Z (can chinh xac)
 
      NVIC:
        [x] TIM2 global interrupt: Enabled
@@ -426,7 +427,7 @@
      NVIC:
        [x] TIM3 global interrupt: Enabled
 
- === TIM4 - Truc Z (16-bit timer) ===
+ === TIM4 - Truc X (16-bit timer) ===
 
    Trong Timers > TIM4:
      Clock Source: Internal Clock
@@ -448,8 +449,8 @@
  LY DO DUNG 3 TIMER RIENG BIET:
    - Moi truc co toc do va gia toc doc lap
    - Thay doi ARR cua tung timer = thay doi tan so step cua tung truc
-   - TIM2 la 32-bit: do phan giai cao nhat, dung cho truc X (thuong la
-     truc chinh / truc dai nhat)
+   - TIM2 la 32-bit: do phan giai cao nhat, dung cho truc Z (can do
+     chinh xac cao khi di chuyen theo phuong thang dung)
    - TIM3, TIM4 la 16-bit: du 65535 tick, voi 1MHz base = max 65ms/step
      tuong duong min speed ~15 step/s (rat cham, du roi)
 
@@ -675,7 +676,8 @@
  e) DEBUG:
     - SWD (PA13/PA14): Debug bang ST-Link / BlackPill on-board
     - USB CDC (PA11/PA12): Co the bat them cho debug logging
-    - USART1 (PA9/PA10): De trong, co the dung cho UART thu 2
+    - USART1 (PA9/PA10): Da cau hinh cho Debug Log (printf redirect)
+      Xem muc 6b de biet chi tiet cau hinh
 
 =========================================================================
  SAU KHI THIET LAP XONG:
