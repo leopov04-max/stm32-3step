@@ -1,0 +1,27 @@
+!SESSION 2026-04-15 15:18:41.469 -----------------------------------------------
+eclipse.buildId=Version 2.1.1
+java.version=21.0.9
+java.vendor=Eclipse Adoptium
+BootLoader constants: OS=win32, ARCH=x86_64, WS=win32, NL=en_US
+Command-line arguments:  -os win32 -ws win32 -arch x86_64
+
+!ENTRY com.st.stm32cube.ide.mcu.informationcenter 1 1 2026-04-15 15:19:28.317
+!MESSAGE Log4j2 initialized with config file C:\qduong\project_one_shot\3_dof\.metadata\.log4j2.xml
+
+!ENTRY com.st.stm32cube.ide.mcu.ide 1 1 2026-04-15 15:19:32.773
+!MESSAGE Started RMI Server, listening on port 41337
+
+!ENTRY com.st.stm32cube.ide.mpu.remote.serial 1 1 2026-04-15 15:19:41.802
+!MESSAGE Executed PowerShell command powershell.exe -Command "Get-CimInstance -ClassName Win32_SerialPort | Select-Object -ExpandProperty DeviceID":
+COM3
+COM4
+
+
+!ENTRY com.st.stm32cube.ide.mpu.remote.serial 1 1 2026-04-15 15:19:41.803
+!MESSAGE port: COM3
+
+!ENTRY com.st.stm32cube.ide.mpu.remote.serial 1 1 2026-04-15 15:19:41.803
+!MESSAGE port: COM4
+
+!ENTRY org.eclipse.cdt.core 1 0 2026-04-15 15:26:42.344
+!MESSAGE Indexed '3_dof_cube' (3 sources, 53 headers) in 0.624 sec: 1,954 declarations; 2,863 references; 0 unresolved inclusions; 1 syntax errors; 2 unresolved names (0.042%)

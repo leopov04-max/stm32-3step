@@ -1,0 +1,692 @@
+=========================================================================
+ HUONG DAN THIET LAP CUBEMX (.ioc) CHO PROJECT stepper_lib
+ MCU: STM32F411CEU6 (WeAct BlackPill V3.1)
+ Muc dich: Dieu khien 3 truc stepper qua TMC2240 (SPI)
+=========================================================================
+ Tham khao tu: 3_dof/motor_controller_spi_blackpill/
+ TARGET: STM32F411CEU6 (thay vi F103C8T6 cua ban cu)
+=========================================================================
+
+ MUC LUC:
+   1. Tao project moi trong STM32CubeIDE
+   2. Bang phan bo chan tong hop
+   3. Cau hinh RCC (Clock)
+   4. Cau hinh SYS (Debug)
+   5. Cau hinh SPI1 (TMC2240)
+   6. Cau hinh USART2 (Python UART)
+   6b. Cau hinh USART1 (Debug Log)
+   7. Cau hinh GPIO - CS pins
+   8. Cau hinh GPIO - STEP/DIR/EN pins
+   9. Cau hinh GPIO - Limit Switch pins (EXTI)
+  10. Cau hinh Timer (Step pulse generation)
+  11. Cau hinh NVIC (Ngat uu tien)
+  12. Cau hinh Clock Tree
+  13. Cau hinh Project Manager
+  14. So do noi chan (Wiring Diagram)
+  15. Ghi chu & Luu y
+
+=========================================================================
+ 1. TAO PROJECT MOI TRONG STM32CubeIDE
+=========================================================================
+
+  File > New > STM32 Project
+  - Tab "MCU/MPU Selector": tim "STM32F411CEU6" > chon > Next
+  - Project Name: stepper_lib
+  - Location: Motion_Control/stepper_lib/
+  - Targeted Language: C
+  - Targeted Binary Type: Executable
+  - Targeted Project Type: STM32Cube
+  > Finish
+
+=========================================================================
+ 2. BANG PHAN BO CHAN TONG HOP
+=========================================================================
+
+ +----------+----------+------------------+------------------------------+
+ | Chan     | Huong    | Chuc nang        | Ghi chu                      |
+ +----------+----------+------------------+------------------------------+
+ |            === SPI1 BUS (chung 3 driver TMC2240) ===                  |
+ | PA5      | AF       | SPI1_SCK         | Clock - chung 3 driver       |
+ | PA6      | AF       | SPI1_MISO        | SDO tu TMC2240               |
+ | PA7      | AF       | SPI1_MOSI        | SDI vao TMC2240              |
+ +----------+----------+------------------+------------------------------+
+ |            === CS PINS (GPIO Output) ===                              |
+ | PA4      | OUT PP   | CS_X             | Chip Select driver X (LOW)   |
+ | PB0      | OUT PP   | CS_Y             | Chip Select driver Y (LOW)   |
+ | PB1      | OUT PP   | CS_Z             | Chip Select driver Z (LOW)   |
+ +----------+----------+------------------+------------------------------+
+ |            === USART2 (Giao tiep Python) ===                          |
+ | PA2      | AF       | USART2_TX        | TX -> RX cua bo chuyen doi   |
+ | PA3      | AF       | USART2_RX        | RX <- TX cua bo chuyen doi   |
+ +----------+----------+------------------+------------------------------+
+ |            === USART1 (Debug Log) ===                                 |
+ | PA9      | AF       | USART1_TX        | TX ra header debug (UART-TTL)|
+ | PA10     | AF       | USART1_RX        | RX (tuy chon, co the bo qua) |
+ +----------+----------+------------------+------------------------------+
+ |            === TRUC X ===                                             |
+ | PB3      | OUT PP   | X_STEP           | Xung buoc motor X            |
+ | PB6      | OUT PP   | X_DIR            | Huong quay motor X           |
+ | PB9      | OUT PP   | X_EN             | Enable driver X (LOW=ON)     |
+ | PB12     | IN PU    | X_LIMIT (EXTI12) | Cong tac hanh trinh X (NO)   |
+ +----------+----------+------------------+------------------------------+
+ |            === TRUC Y ===                                             |
+ | PB4      | OUT PP   | Y_STEP           | Xung buoc motor Y            |
+ | PB7      | OUT PP   | Y_DIR            | Huong quay motor Y           |
+ | PB10     | OUT PP   | Y_EN             | Enable driver Y (LOW=ON)     |
+ | PB13     | IN PU    | Y_LIMIT (EXTI13) | Cong tac hanh trinh Y (NO)   |
+ +----------+----------+------------------+------------------------------+
+ |            === TRUC Z ===                                             |
+ | PB5      | OUT PP   | Z_STEP           | Xung buoc motor Z            |
+ | PB8      | OUT PP   | Z_DIR            | Huong quay motor Z           |
+ | PA8      | OUT PP   | Z_EN             | Enable driver Z (LOW=ON)     |
+ | PB14     | IN PU    | Z_LIMIT (EXTI14) | Cong tac hanh trinh Z (NO)   |
+ +----------+----------+------------------+------------------------------+
+ |            === HE THONG ===                                           |
+ | PC13     | OUT PP   | LED              | LED on-board (Active LOW)    |
+ | PA13     | AF       | SYS_SWDIO        | Debug SWD (KHONG DUNG)       |
+ | PA14     | AF       | SYS_SWCLK        | Debug SWD (KHONG DUNG)       |
+ | PA11     | AF       | USB_DM           | USB (du phong)               |
+ | PA12     | AF       | USB_DP           | USB (du phong)               |
+ +----------+----------+------------------+------------------------------+
+
+ CHAN CON TRONG (du phong mo rong):
+   PA0, PA1, PA11, PA12, PA15, PB2, PB15, PC14, PC15
+
+ LY DO CHON PIN NHU TREN:
+   - SPI1 (PA5/PA6/PA7): giong ban cu, chuan AF cua F411
+   - CS (PA4/PB0/PB1): giong ban cu, gan SPI pins, de noi day
+   - USART2 (PA2/PA3): AF mac dinh, pho bien cho giao tiep ngoai
+   - STEP (PB3/PB4/PB5): nhom lien tiep, de trace PCB
+   - DIR (PB6/PB7/PB8): nhom lien tiep, ke STEP
+   - EN (PB9/PB10/PA8): con lai gan do
+   - LIMIT (PB12/PB13/PB14): ho tro EXTI, co pull-up noi
+   - USART1 (PA9/PA10): debug log, printf redirect
+   - PA0/PA1 de trong: du phong cho ADC, encoder...
+
+=========================================================================
+ 3. CAU HINH RCC (Clock)
+=========================================================================
+
+ Trong Pinout & Configuration > System Core > RCC:
+
+   High Speed Clock (HSE): Crystal/Ceramic Resonator
+     (BlackPill co thach anh 25MHz on-board)
+
+   Low Speed Clock (LSE): Disable
+     (khong can RTC)
+
+=========================================================================
+ 4. CAU HINH SYS (Debug)
+=========================================================================
+
+ Trong Pinout & Configuration > System Core > SYS:
+
+   Debug: Serial Wire
+     (giu PA13/PA14 cho SWD debug)
+
+   Timebase Source: SysTick
+     (mac dinh, dung cho HAL_Delay)
+
+=========================================================================
+ 5. CAU HINH SPI1 (Giao tiep TMC2240)
+=========================================================================
+
+ Trong Pinout & Configuration > Connectivity > SPI1:
+
+   Mode: Full-Duplex Master
+   Hardware NSS Signal: Disable
+     (ta tu dieu khien CS bang GPIO, KHONG dung hardware NSS)
+
+   Parameter Settings:
+   +-----------------------------+-------------------+
+   | Thong so                    | Gia tri           |
+   +-----------------------------+-------------------+
+   | Frame Format                | Motorola          |
+   | Data Size                   | 8 Bits            |
+   | First Bit                   | MSB First         |
+   | Prescaler                   | 64                |
+   | Baud Rate                   | ~1.5 MHz (*)      |
+   | Clock Polarity (CPOL)       | High              |
+   | Clock Phase (CPHA)          | 2 Edge            |
+   | CRC Calculation             | Disabled          |
+   | NSS Signal Type             | Software          |
+   +-----------------------------+-------------------+
+
+   (*) Baud Rate = APB2 Clock / Prescaler
+       Voi APB2 = 96MHz, Prescaler=64 -> ~1.5MHz
+       TMC2240 ho tro toi da ~4MHz SPI
+       Bat dau voi 1-1.5MHz, tang len 4MHz sau khi ket noi on dinh
+
+   QUAN TRONG - SPI Mode 3:
+     CPOL = High (1) : SCK idle o muc HIGH
+     CPHA = 2 Edge (1): Data duoc doc tai canh xuong thu 2
+     -> Day chinh la SPI Mode 3 ma TMC2240 yeu cau
+     -> GIONG voi SPISettings(1000000, MSBFIRST, SPI_MODE3) trong ban cu
+
+   GPIO Settings (tu dong khi chon SPI1):
+     PA5 -> SPI1_SCK  : AF Push-Pull, Very High speed
+     PA6 -> SPI1_MISO : AF Push-Pull (input), No pull
+     PA7 -> SPI1_MOSI : AF Push-Pull, Very High speed
+
+=========================================================================
+ 6. CAU HINH USART2 (Giao tiep Python)
+=========================================================================
+
+ Trong Pinout & Configuration > Connectivity > USART2:
+
+   Mode: Asynchronous
+
+   Parameter Settings:
+   +-----------------------------+-------------------+
+   | Thong so                    | Gia tri           |
+   +-----------------------------+-------------------+
+   | Baud Rate                   | 115200            |
+   | Word Length                  | 8 Bits            |
+   | Parity                      | None              |
+   | Stop Bits                   | 1                 |
+   | Data Direction              | Receive and Transmit |
+   | Over Sampling               | 16 Samples        |
+   +-----------------------------+-------------------+
+
+   DMA Settings (QUAN TRONG cho hieu nang):
+   +------+----------+-----------+----------+--------+
+   | DMA  | Stream   | Direction | Priority | Mode   |
+   +------+----------+-----------+----------+--------+
+   | Add  | DMA1 St5 | USART2_RX | High     | Circular |
+   | Add  | DMA1 St6 | USART2_TX | Medium   | Normal   |
+   +------+----------+-----------+----------+--------+
+
+   NVIC Settings:
+     [x] USART2 global interrupt: Enabled
+     [x] DMA1 stream5 global interrupt: Enabled (RX)
+     [x] DMA1 stream6 global interrupt: Enabled (TX)
+
+   LY DO DUNG DMA:
+     - RX Circular: nhan du lieu lien tuc khong mat byte,
+       ngay ca khi MCU ban xu ly motor
+     - TX Normal: gui response/status ve Python khong block CPU
+     - Rat quan trong khi chay motion control real-time
+
+   GPIO Settings (tu dong):
+     PA2 -> USART2_TX : AF Push-Pull, Very High speed
+     PA3 -> USART2_RX : AF (input), Pull-up
+
+=========================================================================
+ 6b. CAU HINH USART1 (Debug Log)
+=========================================================================
+
+ Trong Pinout & Configuration > Connectivity > USART1:
+
+   Mode: Asynchronous
+
+   Parameter Settings:
+   +-----------------------------+-------------------+
+   | Thong so                    | Gia tri           |
+   +-----------------------------+-------------------+
+   | Baud Rate                   | 115200            |
+   | Word Length                 | 8 Bits            |
+   | Parity                      | None              |
+   | Stop Bits                   | 1                 |
+   | Data Direction              | Receive and Transmit |
+   | Over Sampling               | 16 Samples        |
+   +-----------------------------+-------------------+
+
+   DMA Settings: KHONG can DMA cho USART1
+     (Debug log chi TX, dung IT hoac polling don gian la du)
+
+   NVIC Settings:
+     [x] USART1 global interrupt: Enabled  (neu dung IT)
+     (Neu chi dung HAL_UART_Transmit blocking thi co the Disable)
+
+   GPIO Settings (tu dong):
+     PA9  -> USART1_TX : AF Push-Pull, High speed
+     PA10 -> USART1_RX : AF (input), Pull-up
+
+   LY DO USART1 KHONG CAN DMA:
+     - Chi dung de in log mot chieu TX (printf redirect)
+     - Khong nhan du lieu tu dau tu -> RX tuy chon
+     - Dung HAL_UART_Transmit() blocking hoac printf qua retarget
+     - Khi release san pham: tat tat ca debug log = comment 1 dong
+
+   CACH DUNG TRONG CODE (sau khi generate):
+     // Redirect printf sang USART1
+     int __io_putchar(int ch) {
+         HAL_UART_Transmit(&huart1, (uint8_t*)&ch, 1, HAL_MAX_DELAY);
+         return ch;
+     }
+     // Sau do dung binh thuong:
+     printf("[DEBUG] SPI version = 0x%02X\r\n", version);
+
+   NOI PHAN CUNG:
+     PA9 (USART1_TX) -> RX cua USB-UART adapter (debug)
+     PA10 (USART1_RX) -> TX cua USB-UART adapter (tuy chon)
+     GND chung
+
+=========================================================================
+ 7. CAU HINH GPIO - CS PINS (Chip Select cho TMC2240)
+=========================================================================
+
+ Click truc tiep vao chan tren so do chip trong CubeMX:
+
+   PA4 -> Click > GPIO_Output > Right-click > Enter User Label: CS_X
+   PB0 -> Click > GPIO_Output > Right-click > Enter User Label: CS_Y
+   PB1 -> Click > GPIO_Output > Right-click > Enter User Label: CS_Z
+
+ Sau do vao GPIO > Configuration, thiet lap tung chan:
+
+   +-------+------------------+--------+---------+--------+--------+
+   | Pin   | User Label       | Mode   | Pull    | Speed  | Level  |
+   +-------+------------------+--------+---------+--------+--------+
+   | PA4   | CS_X             | Output | No pull | High   | High   |
+   | PB0   | CS_Y             | Output | No pull | High   | High   |
+   | PB1   | CS_Z             | Output | No pull | High   | High   |
+   +-------+------------------+--------+---------+--------+--------+
+
+   Output Level = High: CS mac dinh HIGH (khong chon driver nao)
+   Mode: Push-Pull
+   Speed: High (SPI can chuyen CS nhanh)
+
+   LUU Y: Co the them dien tro pull-up 10kOhm ngoai tu moi CS len 3.3V
+          Dam bao CS=HIGH khi MCU dang reset/khoi dong
+
+=========================================================================
+ 8. CAU HINH GPIO - STEP / DIR / EN PINS
+=========================================================================
+
+ === STEP PINS ===
+   PB3 -> GPIO_Output > User Label: X_STEP
+   PB4 -> GPIO_Output > User Label: Y_STEP
+   PB5 -> GPIO_Output > User Label: Z_STEP
+
+   +-------+--------+--------+---------+-----------+--------+
+   | Pin   | Label  | Mode   | Pull    | Speed     | Level  |
+   +-------+--------+--------+---------+-----------+--------+
+   | PB3   | X_STEP | Output | No pull | Very High | Low    |
+   | PB4   | Y_STEP | Output | No pull | Very High | Low    |
+   | PB5   | Z_STEP | Output | No pull | Very High | Low    |
+   +-------+--------+--------+---------+-----------+--------+
+
+   Speed = Very High: xung STEP can canh len sac net (rise time nhanh)
+   Level = Low: khong co xung khi chua chay
+
+ === DIR PINS ===
+   PB6 -> GPIO_Output > User Label: X_DIR
+   PB7 -> GPIO_Output > User Label: Y_DIR
+   PB8 -> GPIO_Output > User Label: Z_DIR
+
+   +-------+--------+--------+---------+--------+--------+
+   | Pin   | Label  | Mode   | Pull    | Speed  | Level  |
+   +-------+--------+--------+---------+--------+--------+
+   | PB6   | X_DIR  | Output | No pull | Low    | Low    |
+   | PB7   | Y_DIR  | Output | No pull | Low    | Low    |
+   | PB8   | Z_DIR  | Output | No pull | Low    | Low    |
+   +-------+--------+--------+---------+--------+--------+
+
+   Speed = Low: DIR thay doi truoc khi gui STEP, khong can nhanh
+
+ === EN PINS (Enable driver, Active LOW) ===
+   PB9  -> GPIO_Output > User Label: X_EN
+   PB10 -> GPIO_Output > User Label: Y_EN
+   PA8  -> GPIO_Output > User Label: Z_EN
+
+   +-------+--------+--------+---------+--------+--------+
+   | Pin   | Label  | Mode   | Pull    | Speed  | Level  |
+   +-------+--------+--------+---------+--------+--------+
+   | PB9   | X_EN   | Output | No pull | Low    | High   |
+   | PB10  | Y_EN   | Output | No pull | Low    | High   |
+   | PA8   | Z_EN   | Output | No pull | Low    | High   |
+   +-------+--------+--------+---------+--------+--------+
+
+   Level = High: driver TAT mac dinh khi khoi dong (an toan)
+   LOW = Enable, HIGH = Disable (theo datasheet TMC2240)
+
+=========================================================================
+ 9. CAU HINH GPIO - LIMIT SWITCH PINS (EXTI)
+=========================================================================
+
+ === Cong tac hanh trinh (Normally Open) ===
+   PB12 -> GPIO_EXTI12 > User Label: X_LIMIT
+   PB13 -> GPIO_EXTI13 > User Label: Y_LIMIT
+   PB14 -> GPIO_EXTI14 > User Label: Z_LIMIT
+
+   +-------+---------+-----------------------+---------+
+   | Pin   | Label   | GPIO mode             | Pull    |
+   +-------+---------+-----------------------+---------+
+   | PB12  | X_LIMIT | Ext Interrupt, Falling| Pull-up |
+   | PB13  | Y_LIMIT | Ext Interrupt, Falling| Pull-up |
+   | PB14  | Z_LIMIT | Ext Interrupt, Falling| Pull-up |
+   +-------+---------+-----------------------+---------+
+
+   Pull-up: khi chua nhan, chan = HIGH (1)
+   Falling Edge: khi nhan cong tac, chan HIGH->LOW, tao ngat
+     -> Trong ISR: dung motor ngay lap tuc (an toan)
+
+   CACH NOI:
+     Cong tac NO (Normally Open):
+       1 chan -> GND
+       1 chan -> PBxx (pin MCU)
+     Khi nhan: noi GND vao pin -> pin = LOW -> EXTI falling edge
+
+   NVIC:
+     [x] EXTI line[15:10] interrupt: Enabled
+     (PB12, PB13, PB14 deu nam trong nhom EXTI 10-15)
+
+   LUU Y VE DEBOUNCE:
+     Dung phan mem debounce trong EXTI callback (5-50ms)
+     Code cu dung 5ms debounce - du cho cong tac co khi
+     Xem ham isSwitchPressed() va isSwitchPressedFast() trong ban cu
+
+=========================================================================
+ 10. CAU HINH TIMER (Step Pulse Generation)
+=========================================================================
+
+ Dung 3 timer rieng biet, moi truc 1 timer doc lap.
+ Moi timer chay o che do interrupt-only (khong xuat PWM ra chan).
+ ISR se toggle STEP pin qua GPIO.
+
+ === TIM2 - Truc X (32-bit timer) ===
+
+   Trong Timers > TIM2:
+     Clock Source: Internal Clock
+     Channel 1/2/3/4: (tat ca Disable - khong dung output)
+
+     Parameter Settings:
+     +-----------------------------+-------------------+
+     | Thong so                    | Gia tri           |
+     +-----------------------------+-------------------+
+     | Prescaler (PSC)             | 95                |
+     | Counter Mode                | Up                |
+     | Counter Period (ARR)        | 999               |
+     | Auto-Reload Preload         | Enable            |
+     +-----------------------------+-------------------+
+
+     Prescaler = 95: TIM2 clock = 96MHz / (95+1) = 1MHz (1us/tick)
+     ARR = 999: Ngat moi 1000us = 1ms = 1000 step/s (mac dinh)
+       -> ARR se thay doi trong code de dieu khien toc do
+
+     NVIC:
+       [x] TIM2 global interrupt: Enabled
+
+ === TIM3 - Truc Y (16-bit timer) ===
+
+   Trong Timers > TIM3:
+     Clock Source: Internal Clock
+     Channels: Disable
+
+     Parameter Settings:
+     +-----------------------------+-------------------+
+     | Thong so                    | Gia tri           |
+     +-----------------------------+-------------------+
+     | Prescaler (PSC)             | 95                |
+     | Counter Mode                | Up                |
+     | Counter Period (ARR)        | 999               |
+     | Auto-Reload Preload         | Enable            |
+     +-----------------------------+-------------------+
+
+     NVIC:
+       [x] TIM3 global interrupt: Enabled
+
+ === TIM4 - Truc Z (16-bit timer) ===
+
+   Trong Timers > TIM4:
+     Clock Source: Internal Clock
+     Channels: Disable
+
+     Parameter Settings:
+     +-----------------------------+-------------------+
+     | Thong so                    | Gia tri           |
+     +-----------------------------+-------------------+
+     | Prescaler (PSC)             | 95                |
+     | Counter Mode                | Up                |
+     | Counter Period (ARR)        | 999               |
+     | Auto-Reload Preload         | Enable            |
+     +-----------------------------+-------------------+
+
+     NVIC:
+       [x] TIM4 global interrupt: Enabled
+
+ LY DO DUNG 3 TIMER RIENG BIET:
+   - Moi truc co toc do va gia toc doc lap
+   - Thay doi ARR cua tung timer = thay doi tan so step cua tung truc
+   - TIM2 la 32-bit: do phan giai cao nhat, dung cho truc X (thuong la
+     truc chinh / truc dai nhat)
+   - TIM3, TIM4 la 16-bit: du 65535 tick, voi 1MHz base = max 65ms/step
+     tuong duong min speed ~15 step/s (rat cham, du roi)
+
+ CACH TINH TOC DO STEP:
+   Step Rate (Hz) = Timer Clock / (PSC+1) / (ARR+1)
+                   = 96,000,000 / 96 / (ARR+1)
+                   = 1,000,000 / (ARR+1)
+
+   Vi du:
+     ARR = 999   -> 1000 Hz  = 1000 step/s
+     ARR = 499   -> 2000 Hz  = 2000 step/s
+     ARR = 199   -> 5000 Hz  = 5000 step/s
+     ARR = 99    -> 10000 Hz = 10000 step/s
+     ARR = 49    -> 20000 Hz = 20000 step/s
+     ARR = 19    -> 50000 Hz = 50000 step/s (gioi han thuc te ~40kHz)
+
+ === TIM5 - Microsecond Counter (tuy chon) ===
+
+   Trong Timers > TIM5:
+     Clock Source: Internal Clock
+     Channels: Disable
+
+     Parameter Settings:
+     +-----------------------------+-------------------+
+     | Prescaler (PSC)             | 95                |
+     | Counter Mode                | Up                |
+     | Counter Period (ARR)        | 0xFFFFFFFF        |
+     | Auto-Reload Preload         | Disable           |
+     +-----------------------------+-------------------+
+
+     NVIC: Disable (chi doc counter, khong can ngat)
+
+   Muc dich: Dem microsecond chinh xac (thay cho HAL_GetTick
+   chi co 1ms resolution). Dung cho:
+     - Do thoi gian thuc thi
+     - Debounce chinh xac
+     - Timing profile
+
+   Cach dung: uint32_t us = TIM5->CNT;
+
+=========================================================================
+ 11. CAU HINH NVIC (Ngat uu tien)
+=========================================================================
+
+ Trong System Core > NVIC:
+
+ +----------------------------------+----------+----------+
+ | Interrupt                        | Preempt  | Sub      |
+ +----------------------------------+----------+----------+
+ | TIM2 global interrupt (Z step)   | 0        | 0        |
+ | TIM3 global interrupt (Y step)   | 0        | 0        |
+ | TIM4 global interrupt (X step)   | 0        | 0        |
+ | EXTI line[15:10] (Limit SW)      | 1        | 0        |
+ | DMA1 Stream5 (USART2 RX)         | 2        | 0        |
+ | USART2 global interrupt          | 2        | 0        |
+ | USART1 global interrupt          | 3        | 0        |
+ | DMA1 Stream6 (USART2 TX)         | 3        | 0        |
+ | SysTick                          | 15       | 0        |
+ +----------------------------------+----------+----------+
+
+ DO UU TIEN (0 = CAO NHAT):
+   0: Step timers - KHONG DUOC TRE, anh huong toc do motor
+   1: Limit switch - dung khan cap, nhung cho 1 step cycle duoc
+   2: UART RX - nhan lenh tu Python, khong can real-time bang step
+   3: UART TX (USART2) + USART1 debug - uu tien thap nhat
+  15: SysTick - HAL timing, uu tien thap nhat
+
+=========================================================================
+ 12. CAU HINH CLOCK TREE
+=========================================================================
+
+ Trong tab Clock Configuration:
+
+   Input: HSE = 25 MHz (thach anh tren BlackPill)
+
+   PLL Source Mux: HSE
+   PLL M: /25
+   PLL N: x192
+   PLL P: /2
+   -> SYSCLK = 96 MHz
+
+   AHB Prescaler: /1 -> HCLK = 96 MHz
+   APB1 Prescaler: /2 -> APB1 = 48 MHz (TIM2,3,4,5 clock = 96MHz*)
+   APB2 Prescaler: /1 -> APB2 = 96 MHz (SPI1 clock = 96MHz)
+
+   (*) Khi APB1 prescaler != 1, timer clock = APB1 x 2 = 96MHz
+
+   +------------------+----------+
+   | Clock            | Gia tri  |
+   +------------------+----------+
+   | SYSCLK           | 96 MHz   |
+   | HCLK (AHB)       | 96 MHz   |
+   | APB1 peripheral  | 48 MHz   |
+   | APB1 timer       | 96 MHz   |
+   | APB2 peripheral  | 96 MHz   |
+   | APB2 timer       | 96 MHz   |
+   +------------------+----------+
+
+   TAI SAO 96MHz MA KHONG PHAI 100MHz:
+     F411 SYSCLK max = 100MHz, nhung 96MHz chia chan hon:
+     - SPI prescaler 64 -> 1.5MHz (sach se)
+     - Timer prescaler 96 -> 1.000MHz chinh xac (1us/tick)
+     - UART baudrate chinh xac hon
+
+=========================================================================
+ 13. CAU HINH PROJECT MANAGER
+=========================================================================
+
+ Trong tab Project Manager:
+
+   === Project ===
+     Project Name: stepper_lib
+     Toolchain / IDE: STM32CubeIDE
+
+   === Code Generator ===
+     [x] Copy all used libraries into the project folder
+     [x] Generate peripheral initialization as a pair of .c/.h files
+         per peripheral
+         -> Tao rieng spi.c, usart.c, tim.c, gpio.c
+         -> De bao tri hon
+     [x] Keep User Code when re-generating
+     [ ] Delete previously generated files when not re-generated
+
+   === Advanced Settings ===
+     Tat ca peripheral: HAL (mac dinh)
+     (Co the chuyen GPIO sang LL sau neu can toi uu toc do toggle STEP)
+
+=========================================================================
+ 14. SO DO NOI CHAN (WIRING DIAGRAM)
+=========================================================================
+
+                  +------------------------+
+                  |   STM32F411CEU6        |
+                  |   BlackPill V3.1       |
+                  |                        |
+  USB-TTL ------->|  PA3  (USART2_RX)     | <- Lenh tu Python
+  (Python) <------|  PA2  (USART2_TX)     | -> Response ve Python
+                  |                        |
+  USB-TTL Debug ->|  PA10 (USART1_RX)     | (tuy chon)
+  (printf log) <--|  PA9  (USART1_TX)     | -> Terminal debug
+                  |                        |
+  === SPI1 BUS (chung 3 driver TMC2240) ===|
+                  |  PA5  (SCK)  --------->| SCK  (3 driver)
+                  |  PA6  (MISO) <---------|  SDO  (3 driver)
+                  |  PA7  (MOSI) --------->| SDI  (3 driver)
+                  |                        |
+  === DRIVER X =============================
+                  |  PA4  (CS_X)  -------->| CSN  driver X
+                  |  PB3  (X_STEP) ------->| STEP driver X
+                  |  PB6  (X_DIR)  ------->| DIR  driver X
+                  |  PB9  (X_EN)   ------->| EN   driver X
+                  |  PB12 (X_LIMIT) <------| SW X (NO -> GND)
+                  |                        |
+  === DRIVER Y =============================
+                  |  PB0  (CS_Y)  -------->| CSN  driver Y
+                  |  PB4  (Y_STEP) ------->| STEP driver Y
+                  |  PB7  (Y_DIR)  ------->| DIR  driver Y
+                  |  PB10 (Y_EN)   ------->| EN   driver Y
+                  |  PB13 (Y_LIMIT) <------| SW Y (NO -> GND)
+                  |                        |
+  === DRIVER Z =============================
+                  |  PB1  (CS_Z)  -------->| CSN  driver Z
+                  |  PB5  (Z_STEP) ------->| STEP driver Z
+                  |  PB8  (Z_DIR)  ------->| DIR  driver Z
+                  |  PA8  (Z_EN)   ------->| EN   driver Z
+                  |  PB14 (Z_LIMIT) <------| SW Z (NO -> GND)
+                  |                        |
+  === HE THONG =====                      |
+                  |  PC13 = LED (Active LOW)
+                  |  PA13/PA14 = SWD Debug |
+                  |  PA11/PA12 = USB (du phong)
+                  +------------------------+
+
+  === NGUON ===
+    BlackPill 3.3V -----> VCC_IO (ca 3 driver TMC2240)
+    BlackPill GND  -----> GND    (chung tat ca)
+    Nguon 12-24V   -----> VM     (ca 3 driver TMC2240)
+
+  === CONG TAC HANH TRINH (Normally Open) ===
+    Moi cong tac:
+      1 chan --> GND
+      1 chan --> PBxx (MCU pin, da co Pull-up noi 3.3V)
+    Khi nhan: pin = LOW (GND) -> EXTI Falling Edge
+
+  === LUU Y SPI ===
+    - Day SPI nen ngan < 15cm
+    - Them 10kOhm pull-up tu moi CS pin len 3.3V (tuy chon)
+    - KHONG can dien tro noi tiep tren SCK/MOSI/MISO
+    - TMC2240 SPI Mode 3: CPOL=1, CPHA=1
+
+=========================================================================
+ 15. GHI CHU & LUU Y
+=========================================================================
+
+ a) SO SANH VOI BAN CU (Blue Pill F103):
+    - F411 nhanh hon: 96MHz vs 72MHz
+    - F411 co FPU: tinh toan gia toc/vi tri nhanh hon nhieu
+    - F411 Flash lon hon: 512KB vs 64KB
+    - F411 SRAM lon hon: 128KB vs 20KB
+    - SPI pins giong nhau: PA5/PA6/PA7 (de chuyen doi)
+    - CS pins giong nhau: PA4/PB0/PB1
+
+ b) KHAC BIET CHINH TRONG CODE:
+    - Ban cu dung delay-based step: delayMicroseconds(600)
+      -> KEM: block CPU, khong the lam gi khac
+    - Ban moi dung Timer interrupt: chinh xac, khong block
+      -> CPU ranh de xu ly UART, SPI, tinh toan trajectory
+
+ c) TRUOC KHI NAP CODE:
+    - Kiem tra thach anh 25MHz tren BlackPill
+    - Kiem tra VCC_IO cua TMC2240 = 3.3V
+    - Dam bao EN pins = HIGH truoc khi cap nguon motor (an toan)
+    - Kiem tra ket noi SPI bang cach doc thanh ghi IOIN (VERSION=0x40)
+
+ d) THU TU KHOI DONG AN TOAN:
+    1. Cap nguon MCU (3.3V)
+    2. MCU init: EN=HIGH (driver tat), CS=HIGH (SPI idle)
+    3. Init SPI, doc VERSION de xac nhan ket noi
+    4. Cau hinh TMC2240 (dong dien, microstep, StealthChop)
+    5. EN=LOW (bat driver)
+    6. Bat dau nhan lenh tu Python qua UART
+
+ e) DEBUG:
+    - SWD (PA13/PA14): Debug bang ST-Link / BlackPill on-board
+    - USB CDC (PA11/PA12): Co the bat them cho debug logging
+    - USART1 (PA9/PA10): De trong, co the dung cho UART thu 2
+
+=========================================================================
+ SAU KHI THIET LAP XONG:
+   1. Ctrl+S de luu file .ioc
+   2. CubeMX se hoi "Generate Code?" -> Yes
+   3. Kiem tra cac file duoc tao:
+      - Core/Src/gpio.c      (CS, STEP, DIR, EN, LIMIT, LED)
+      - Core/Src/spi.c       (SPI1 init)
+      - Core/Src/usart.c     (USART2 init + DMA, USART1 init)
+      - Core/Src/tim.c       (TIM2, TIM3, TIM4, TIM5 init)
+      - Core/Src/dma.c       (DMA1 streams)
+      - Core/Inc/*.h         (cac header tuong ung)
+   4. Bat dau viet code trong App/ folder (theo cau truc da de xuat)
+=========================================================================
